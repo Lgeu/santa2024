@@ -90,21 +90,30 @@ def make_neighbor_6(words_input: list[str]) -> list[str]:
     """区間を反転する"""
     words = words_input.copy()
     idx1 = random.randint(0, len(words))
-    idx2 = random.randint(0, len(words))
-    if idx1 == idx2:
-        return None
+    idx2 = (idx1 + random.randint(2, len(words) - 2)) % len(words)
     if idx1 > idx2:
         idx1, idx2 = idx2, idx1
     words[idx1:idx2] = words[idx1:idx2][::-1]
     return words
 
 
-def make_neighbor(words_input: list[str], neighbor_prob: dict[int, float]) -> list[str]:
+def make_neighbor_7(words_input: list[str]) -> list[str]:
+    """ランダムな 2 単語を入れ替える"""
+    words = words_input.copy()
+    idx1 = random.randint(0, len(words) - 1)
+    idx2 = (idx1 + random.randint(1, len(words) - 1)) % len(words)
+    words[idx1], words[idx2] = words[idx2], words[idx1]
+    return words
+
+
+def make_neighbor(
+    words_input: list[str], neighbor_prob: dict[int, float]
+) -> tuple[list[str], int]:
     """ランダムに操作を行う"""
     words_return = None
     while words_return is None:
-        coin = np.random.choice(
-            list(neighbor_prob.keys()), p=list(neighbor_prob.values())
+        coin = int(
+            np.random.choice(list(neighbor_prob.keys()), p=list(neighbor_prob.values()))
         )
         if coin == 1:
             words_return = make_neighbor_1(words_input)
@@ -118,12 +127,14 @@ def make_neighbor(words_input: list[str], neighbor_prob: dict[int, float]) -> li
             words_return = make_neighbor_5(words_input)
         elif coin == 6:
             words_return = make_neighbor_6(words_input)
+        elif coin == 7:
+            words_return = make_neighbor_7(words_input)
         else:
             raise ValueError("Invalid neighbor function coin")
         if words_return == words_input:
             words_return = None
     assert sorted(words_input) == sorted(words_return)
-    return words_return
+    return words_return, coin
 
 
 class Optimization:
@@ -184,6 +195,7 @@ class Optimization:
             4: 1.0,
             5: 1.0,
             6: 10.0,
+            7: 1.0,
         }
         prob_total = sum(self.neighbor_prob.values())
         for key in self.neighbor_prob:
@@ -211,35 +223,73 @@ class Optimization:
         n_sample: int = 32,
         verbose: bool = False,
     ) -> tuple[list[str], float]:
+        def search(
+            words: list[str], depth: int = 0
+        ) -> tuple[float, list[str], list[int]]:
+            depth_to_threshold = {
+                0: 4.0,
+                1: 2.0,
+                2: 0.0,
+            }
+
+            max_depth = depth
+            for _ in range(50):
+                list_words_nxt: list[list[str]] = []
+                list_texts_nxt: list[str] = []
+                for _ in range(n_sample):
+                    words_nxt, neighbor_type = make_neighbor(words, self.neighbor_prob)
+                    list_words_nxt.append(words_nxt)
+                    list_texts_nxt.append(" ".join(words_nxt))
+                list_perplexity_nxt_with_error = self._calc_perplexity(list_texts_nxt)
+                idx_min = int(np.argmin(list_perplexity_nxt_with_error))
+                words_nxt = list_words_nxt[idx_min]
+                perplexity_nxt_with_error = list_perplexity_nxt_with_error[idx_min]
+                if (
+                    perplexity_nxt_with_error < perplexity_best + 2.0
+                ):  # Cutoff threshold
+                    perplexity_nxt = self._calc_perplexity(" ".join(words_nxt))
+                else:
+                    perplexity_nxt = perplexity_nxt_with_error
+
+                if perplexity_nxt < perplexity_best:
+                    return perplexity_nxt, words_nxt, [neighbor_type], max_depth
+                elif perplexity_nxt < perplexity_best + depth_to_threshold[depth]:
+                    perplexity_nxt, words_nxt, neighbor_types, max_depth_ = search(
+                        words_nxt, depth + 1
+                    )
+                    max_depth = max(max_depth, max_depth_)
+                    if perplexity_nxt < perplexity_best:
+                        return (
+                            perplexity_nxt,
+                            words_nxt,
+                            [neighbor_type] + neighbor_types,
+                            max_depth,
+                        )
+            return perplexity_nxt, words_nxt, [neighbor_type], max_depth
+
         for iter_now in tqdm(range(iter_total)):
-            list_words_nxt: list[list[str]] = []
-            list_texts_nxt: list[str] = []
-            for _ in range(n_sample):
-                words_nxt = make_neighbor(words_best, self.neighbor_prob)
-                list_words_nxt.append(words_nxt)
-                list_texts_nxt.append(" ".join(words_nxt))
-            # Evaluate perplexity
-            list_perplexity_nxt = self._calc_perplexity(list_texts_nxt)
-            # Find minimum perplexity
-            idx_min = int(np.argmin(list_perplexity_nxt))
-            words_nxt = list_words_nxt[idx_min]
-            perplexity_nxt_with_error = list_perplexity_nxt[idx_min]
-            if perplexity_nxt_with_error < perplexity_best + 2.0:  # Cutoff threshold
-                perplexity_nxt = self._calc_perplexity(" ".join(words_nxt))
-            else:
-                perplexity_nxt = perplexity_nxt_with_error
-            if iter_now % 50 == 0 and verbose:
+            while True:
+                perplexity_nxt, words_nxt, neighbor_types, max_depth = search(
+                    words_best
+                )
+                if perplexity_nxt < perplexity_best:
+                    print(
+                        f"[hillclimbing] Update: {perplexity_best:.2f}"
+                        f" -> {perplexity_nxt:.2f},"
+                        f" neighbor:{','.join(map(str, neighbor_types))}"
+                        f" depth:{max_depth}"
+                    )
+                    perplexity_best = perplexity_nxt
+                    words_best = words_nxt.copy()
+                else:
+                    break
+            if iter_now % 5 == 0 and verbose:
                 print(
                     f"[hillclimbing] iter:{iter_now} best:{perplexity_best:.2f}"
                     f" nxt:{perplexity_nxt:.2f}"
+                    f" neighbor:{','.join(map(str, neighbor_types))}"
+                    f" depth:{max_depth}"
                 )
-            if perplexity_nxt < perplexity_best:
-                print(
-                    f"[hillclimbing] Update: {perplexity_best:.2f}"
-                    f" -> {perplexity_nxt:.2f}"
-                )
-                perplexity_best = perplexity_nxt
-                words_best = words_nxt.copy()
         return words_best, perplexity_best
 
     def _calc_n_kick_and_reset(self, n_idx) -> tuple[int, bool]:
@@ -276,7 +326,7 @@ class Optimization:
             words_best, perplexity_best = self._hillclimbing(
                 words_best,
                 perplexity_best_old,
-                iter_total=100,
+                iter_total=10,
                 n_sample=16,
                 verbose=True,
             )
