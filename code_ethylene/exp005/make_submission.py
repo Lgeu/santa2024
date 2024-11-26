@@ -11,6 +11,7 @@ import argparse
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--force", action="store_true")
+parser.add_argument("--loop", action="store_true")
 args = parser.parse_args()
 
 
@@ -114,7 +115,7 @@ if args.force:
     subprocess.run(cmd, shell=True)
     print()
 
-else:
+elif args.loop:
     while True:
         # get best csv
 
@@ -137,3 +138,7 @@ else:
         # break
 
         time.sleep(60 * 30)
+
+else:
+    path_submission, score = update_submission()
+    print(f"submision path: {path_submission}")
