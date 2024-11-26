@@ -8,10 +8,9 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 import torch
+from evaluation import PerplexityCalculator
 from tqdm.auto import tqdm
-
-from .evaluation import PerplexityCalculator
-from .util import (
+from util import (
     get_path_words_best,
     get_perplexity_,
     load_score_memo,
@@ -20,7 +19,7 @@ from .util import (
 )
 
 
-def free_memory(self):
+def free_memory():
     gc.collect()
     torch.cuda.empty_cache()
 
@@ -220,10 +219,7 @@ class Optimization:
                 list_words_nxt.append(words_nxt)
                 list_texts_nxt.append(" ".join(words_nxt))
             # Evaluate perplexity
-            # バッチ推論になっていない
-            list_perplexity_nxt = [
-                self._calc_perplexity(text) for text in list_texts_nxt
-            ]
+            list_perplexity_nxt = self._calc_perplexity(list_texts_nxt)
             # Find minimum perplexity
             idx_min = int(np.argmin(list_perplexity_nxt))
             words_nxt = list_words_nxt[idx_min]
@@ -281,8 +277,8 @@ class Optimization:
                 words_best,
                 perplexity_best_old,
                 iter_total=100,
-                n_sample=16,  # Adjust the batch size as needed
-                verbose=1,
+                n_sample=16,
+                verbose=True,
             )
             print(f"[run] n_idx:{n_idx} perplexity_best:{perplexity_best:.2f}")
             did_kick = False
@@ -294,9 +290,9 @@ class Optimization:
                     did_kick = True
                     self.list_no_update_cnt[n_idx] = 0
                     if flag_reset:
-                        print("Reset words")
+                        print("[run] Reset words")
                         words_best = self._get_best_all(n_idx)[0]
-                    print(f"Apply {n_kick} kicks")
+                    print(f"[run] Apply {n_kick} kicks")
                     words_best = self.ILS_kick(words_best, n_kick=n_kick)
                     perplexity_best = self._calc_perplexity(" ".join(words_best))
             else:
@@ -310,8 +306,8 @@ class Optimization:
 
 
 if __name__ == "__main__":
-    path_input_csv = Path("../../input/santa-2024/sample_submission.csv")
-    path_model = Path("../../input/gemma-2/")
+    path_input_csv = Path("../input/santa-2024/sample_submission.csv")
+    path_model = Path("../input/gemma-2/")
     path_save = Path("./save")
     optimizer = Optimization(path_input_csv, path_model, path_save)
     optimizer.run()

@@ -5,10 +5,10 @@ from typing import Union
 import numpy as np
 import pandas as pd
 
-path_input_csv = Path("../../input/santa-2024/sample_submission.csv")
+path_input_csv = Path("../input/santa-2024/sample_submission.csv")
 path_save = Path("./save")
 # path_save.mkdir(parents=True, exist_ok=True)
-path_model = Path("../../input/gemma-2/")
+path_model = Path("../input/gemma-2/")
 
 df_input = pd.read_csv(path_input_csv)
 
