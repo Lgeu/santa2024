@@ -227,9 +227,9 @@ class Optimization:
             words: list[str], depth: int = 0
         ) -> tuple[float, list[str], list[int]]:
             depth_to_threshold = {
-                0: 4.0,
-                1: 2.0,
-                2: 0.0,
+                0: 1.02,
+                1: 1.01,
+                2: 1.0,
             }
 
             max_depth = depth
@@ -253,7 +253,7 @@ class Optimization:
 
                 if perplexity_nxt < perplexity_best:
                     return perplexity_nxt, words_nxt, [neighbor_type], max_depth
-                elif perplexity_nxt < perplexity_best + depth_to_threshold[depth]:
+                elif perplexity_nxt < perplexity_best * depth_to_threshold[depth]:
                     perplexity_nxt, words_nxt, neighbor_types, max_depth_ = search(
                         words_nxt, depth + 1
                     )
