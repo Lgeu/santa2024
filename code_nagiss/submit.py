@@ -66,7 +66,7 @@ def update_submission(
 
 def get_best_score_from_submissions(
     path_save_submissions: Path,
-) -> tuple[Optional[Path], Optional[list[float]]]:
+) -> tuple[Optional[Path], Optional[float]]:
     """スコアが最小の提出ファイルを取得する。"""
     list_path_csv = list(path_save_submissions.glob("submission_*.csv"))
     if not list_path_csv:
@@ -86,8 +86,7 @@ def get_best_score_from_submissions(
     score_best, path_best = min(list_scores_paths, key=lambda x: x[0])
     print(f"Best score: {score_best}")
     print(f"Best submission path: {path_best}")
-    scores = [score for score, _ in list_scores_paths]
-    return path_best, scores
+    return path_best, score_best
 
 
 def submit_to_kaggle(path_submission, comment="submit"):
@@ -130,22 +129,16 @@ def main():
             submit_to_kaggle(path_submission, comment=scores_str)
     elif args.loop:
         while True:
-            _, scores_old = get_best_score_from_submissions(path_save_submissions)
-            score_old = (
-                math.inf if scores_old is None else sum(scores_old) / len(scores_old)
-            )
+            _, score_old = get_best_score_from_submissions(path_save_submissions)
+            score_old = score_old or math.inf
             update_submission(df, path_save, path_save_submissions)
-            path_best_new, scores_new = get_best_score_from_submissions(
+            path_best_new, score_new = get_best_score_from_submissions(
                 path_save_submissions
             )
-            score_new = (
-                math.inf if scores_new is None else sum(scores_new) / len(scores_new)
-            )
+            score_new = score_new or math.inf
             if score_new < score_old:
                 print("New best submission found.")
                 print(f"Best score improved: {score_old} -> {score_new}")
-                scores_str = ", ".join(f"{score}" for score in scores_new)
-                print(f"Scores: {scores_str}")
                 submit_to_kaggle(path_best_new, comment=scores_str)
             else:
                 print("No improvement in score.")
