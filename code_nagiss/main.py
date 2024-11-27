@@ -221,26 +221,43 @@ class Optimization:
         self,
         words_best: list[str],
         perplexity_best: float,
-        iter_total: int = 1,
+        iter_total: int = 1000,
         n_sample: int = 16,
         verbose: bool = False,
     ) -> tuple[list[str], float]:
+        pbar = tqdm(total=iter_total, mininterval=5)
+
         def search(
-            words: list[str], depth: int = 0
+            words: list[str], last_words: Optional[list[str]] = None, depth: int = 0
         ) -> tuple[float, list[str], list[int]]:
             depth_to_threshold = {
                 0: 1.005,
-                1: 1.005,
-                2: 1.005,
-                3: 1.0,
+                1: 1.004,
+                2: 1.003,
+                3: 1.002,
+                4: 1.002,
+                5: 1.002,
+                6: 1.002,
+                7: 1.002,
+                8: 1.002,
+                9: 1.002,
+                10: 1.001,
+                11: 1.001,
+                12: 1.001,
+                13: 1.001,
+                13: 1.001,
+                14: 1.001,
+                15: 1.0,
             }
 
             max_depth = depth
-            for _ in tqdm(range(50)) if depth == 0 else range(50):
+            for _ in itertools.count(0) if depth == 0 else range(50):
                 list_words_nxt: list[list[str]] = []
                 list_texts_nxt: list[str] = []
-                for _ in range(n_sample):
+                while len(list_words_nxt) < n_sample:
                     words_nxt, neighbor_type = make_neighbor(words, self.neighbor_prob)
+                    if words_nxt == last_words:
+                        continue
                     list_words_nxt.append(words_nxt)
                     list_texts_nxt.append(" ".join(words_nxt))
                 list_perplexity_nxt_with_error = self._calc_perplexity(list_texts_nxt)
@@ -258,7 +275,7 @@ class Optimization:
                     return perplexity_nxt, words_nxt, [neighbor_type], max_depth
                 elif perplexity_nxt < perplexity_best * depth_to_threshold[depth]:
                     perplexity_nxt, words_nxt, neighbor_types, max_depth_ = search(
-                        words_nxt, depth + 1
+                        words_nxt, words, depth + 1
                     )
                     max_depth = max(max_depth, max_depth_)
                     if perplexity_nxt < perplexity_best:
@@ -268,31 +285,32 @@ class Optimization:
                             [neighbor_type] + neighbor_types,
                             max_depth,
                         )
+
+                if pbar.n >= iter_total:
+                    break
+                if pbar.n % 200 == 0:
+                    print(
+                        f"[hillclimbing] iter:{pbar.n} best:{perplexity_best:.2f}"
+                        f" nxt:{perplexity_nxt:.2f}"
+                        f" neighbor:{neighbor_type}"
+                        f" depth:{depth}"
+                    )
+                pbar.update(1)
             return perplexity_nxt, words_nxt, [neighbor_type], max_depth
 
-        for iter_now in tqdm(range(iter_total)):
-            while True:
-                perplexity_nxt, words_nxt, neighbor_types, max_depth = search(
-                    words_best
-                )
-                if perplexity_nxt < perplexity_best:
-                    print(
-                        f"[hillclimbing] Update: {perplexity_best:.2f}"
-                        f" -> {perplexity_nxt:.2f},"
-                        f" neighbor:{','.join(map(str, neighbor_types))}"
-                        f" depth:{max_depth}"
-                    )
-                    perplexity_best = perplexity_nxt
-                    words_best = words_nxt.copy()
-                else:
-                    break
-            if iter_now % 5 == 0 and verbose:
-                print(
-                    f"[hillclimbing] iter:{iter_now} best:{perplexity_best:.2f}"
-                    f" nxt:{perplexity_nxt:.2f}"
-                    f" neighbor:{','.join(map(str, neighbor_types))}"
-                    f" depth:{max_depth}"
-                )
+        perplexity_nxt, words_nxt, neighbor_types, max_depth = search(words_best)
+        if perplexity_nxt < perplexity_best:
+            print(
+                f"[hillclimbing] Update: {perplexity_best:.2f}"
+                f" -> {perplexity_nxt:.2f},"
+                f" neighbor:{','.join(map(str, neighbor_types))}"
+                f" max_depth:{max_depth}"
+            )
+            perplexity_best = perplexity_nxt
+            words_best = words_nxt
+        else:
+            print(f"[hillclimbing] No update, max_depth:{max_depth}")
+
         return words_best, perplexity_best
 
     def _calc_n_kick_and_reset(self, n_idx) -> tuple[int, bool]:
@@ -329,7 +347,7 @@ class Optimization:
             words_best, perplexity_best = self._hillclimbing(
                 words_best,
                 perplexity_best_old,
-                iter_total=1,
+                iter_total=1000,
                 n_sample=16,
                 verbose=True,
             )
