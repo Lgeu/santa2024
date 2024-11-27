@@ -193,7 +193,7 @@ class Optimization:
             2: 5.0,
             3: 5.0,
             4: 1.0,
-            5: 5.0,
+            5: 1.0,  # パターンが少ない
             6: 1.0,
             7: 1.0,
         }
@@ -231,13 +231,13 @@ class Optimization:
             words: list[str], last_words: Optional[list[str]] = None, depth: int = 0
         ) -> tuple[float, list[str], list[int]]:
             depth_to_threshold = {
-                0: 1.005,
-                1: 1.004,
-                2: 1.003,
-                3: 1.002,
-                4: 1.002,
-                5: 1.002,
-                6: 1.002,
+                0: 1.05,
+                1: 1.02,
+                2: 1.015,
+                3: 1.01,
+                4: 1.005,
+                5: 1.004,
+                6: 1.003,
                 7: 1.002,
                 8: 1.002,
                 9: 1.002,
@@ -251,7 +251,7 @@ class Optimization:
             }
 
             max_depth = depth
-            for _ in itertools.count(0) if depth == 0 else range(50):
+            for _ in itertools.count(0) if depth == 0 else range(10):
                 list_words_nxt: list[list[str]] = []
                 list_texts_nxt: list[str] = []
                 while len(list_words_nxt) < n_sample:
@@ -288,7 +288,7 @@ class Optimization:
 
                 if pbar.n >= iter_total:
                     break
-                if pbar.n % 200 == 0:
+                if pbar.n % 100 == 0:
                     print(
                         f"[hillclimbing] iter:{pbar.n} best:{perplexity_best:.2f}"
                         f" nxt:{perplexity_nxt:.2f}"
@@ -348,7 +348,7 @@ class Optimization:
                 words_best,
                 perplexity_best_old,
                 iter_total=1000,
-                n_sample=16,
+                n_sample=64,
                 verbose=True,
             )
             print(f"[run] n_idx:{n_idx} perplexity_best:{perplexity_best:.2f}")
