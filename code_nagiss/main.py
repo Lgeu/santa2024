@@ -330,10 +330,14 @@ class Optimization:
         n_kick = int(np.sqrt(n_kick)) - 1
         return n_kick, flag_reset
 
-    def ILS_kick(self, words: list[str], n_kick: int = 2) -> list[str]:
+    def ILS_kick(
+        self, words: list[str], n_kick: int = 2
+    ) -> tuple[list[str], list[int]]:
+        neighbor_types = []
         for _ in range(n_kick):
-            words = make_neighbor(words, self.neighbor_prob)
-        return words
+            words, neighbor_type = make_neighbor(words, self.neighbor_prob)
+            neighbor_types.append(neighbor_type)
+        return words, neighbor_types
 
     def run(self, list_idx_target: Optional[list[int]] = None):
         n_idx = 0
@@ -363,8 +367,10 @@ class Optimization:
                     if flag_reset:
                         print("[run] Reset words")
                         words_best = self._get_best_all(n_idx)[0]
-                    print(f"[run] Apply {n_kick} kicks")
-                    words_best = self.ILS_kick(words_best, n_kick=n_kick)
+                    words_best, neighbor_types = self.ILS_kick(
+                        words_best, n_kick=n_kick
+                    )
+                    print(f"[run] Apply {n_kick} kicks: {neighbor_types}")
                     perplexity_best = self._calc_perplexity(" ".join(words_best))
             else:
                 self.list_no_update_cnt[n_idx] = 0
