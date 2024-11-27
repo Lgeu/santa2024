@@ -157,7 +157,7 @@ class Optimization:
         self.df = pd.read_csv(self.path_input_csv)
         self.n_idx_total = len(self.df)
         self.calculator = PerplexityCalculator(model_path=str(self.path_model))
-        self.score_memo = load_score_memo()
+        self.score_memo, self.score_memo_with_error = load_score_memo()
 
         # 現在までの最良の解
         self.list_words_best: list[list[str]] = []
@@ -190,11 +190,11 @@ class Optimization:
         # 各遷移の選択確率
         self.neighbor_prob = {
             1: 10.0,
-            2: 30.0,
-            3: 10.0,
+            2: 5.0,
+            3: 5.0,
             4: 1.0,
-            5: 1.0,
-            6: 10.0,
+            5: 5.0,
+            6: 1.0,
             7: 1.0,
         }
         prob_total = sum(self.neighbor_prob.values())
@@ -202,7 +202,9 @@ class Optimization:
             self.neighbor_prob[key] = self.neighbor_prob[key] / prob_total
 
     def _calc_perplexity(self, text: str) -> float:
-        return get_perplexity_(self.calculator, self.score_memo, text)
+        return get_perplexity_(
+            self.calculator, self.score_memo, self.score_memo_with_error, text
+        )
 
     def _get_best(self, n_idx: int) -> tuple[list[str], float]:
         return self.list_words_best[n_idx], self.list_perplexity_best[n_idx]
@@ -219,21 +221,22 @@ class Optimization:
         self,
         words_best: list[str],
         perplexity_best: float,
-        iter_total: int = 100,
-        n_sample: int = 32,
+        iter_total: int = 1,
+        n_sample: int = 16,
         verbose: bool = False,
     ) -> tuple[list[str], float]:
         def search(
             words: list[str], depth: int = 0
         ) -> tuple[float, list[str], list[int]]:
             depth_to_threshold = {
-                0: 1.02,
-                1: 1.01,
-                2: 1.0,
+                0: 1.005,
+                1: 1.005,
+                2: 1.005,
+                3: 1.0,
             }
 
             max_depth = depth
-            for _ in range(50):
+            for _ in tqdm(range(50)) if depth == 0 else range(50):
                 list_words_nxt: list[list[str]] = []
                 list_texts_nxt: list[str] = []
                 for _ in range(n_sample):
@@ -326,7 +329,7 @@ class Optimization:
             words_best, perplexity_best = self._hillclimbing(
                 words_best,
                 perplexity_best_old,
-                iter_total=10,
+                iter_total=1,
                 n_sample=16,
                 verbose=True,
             )
@@ -352,7 +355,7 @@ class Optimization:
             self._update_best_all(n_idx, words_best, perplexity_best)
             if not did_kick:
                 save_text(self._calc_perplexity, n_idx, " ".join(words_best), verbose=1)
-            save_score_memo(self.score_memo)
+            save_score_memo(self.score_memo, self.score_memo_with_error)
 
 
 if __name__ == "__main__":

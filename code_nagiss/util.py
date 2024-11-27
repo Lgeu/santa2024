@@ -62,26 +62,40 @@ def save_text(get_perplexity, n_idx, text, verbose=0):
     return score
 
 
-def load_score_memo() -> dict:
-    path_score_memo = path_save / "score_memo.pkl"
-    if path_score_memo.exists():
-        with path_score_memo.open("rb") as f:
-            score_memo = pickle.load(f)
-    else:
-        score_memo = {}
-    return score_memo
+def load_score_memo() -> tuple[dict[str, float], dict[str, float]]:
+    def load(name: str) -> dict[str, float]:
+        path_score_memo = path_save / name
+        if path_score_memo.exists():
+            with path_score_memo.open("rb") as f:
+                score_memo = pickle.load(f)
+        else:
+            score_memo = {}
+        return score_memo
+
+    return load("score_memo.pkl"), load("score_memo_with_error.pkl")
 
 
-def save_score_memo(score_memo):
-    score_memo_original = load_score_memo()
+def save_score_memo(
+    score_memo: dict[str, float],
+    score_memo_with_error: dict[str, float],
+):
+    def save(name: str, score_memo: dict[str, float]):
+        path_score_memo = path_save / name
+        with path_score_memo.open("wb") as f:
+            pickle.dump(score_memo, f)
+
+    score_memo_original, score_memo_with_error_original = load_score_memo()
     score_memo_original.update(score_memo)
-    path_score_memo = path_save / "score_memo.pkl"
-    with path_score_memo.open("wb") as f:
-        pickle.dump(score_memo_original, f)
+    score_memo_with_error_original.update(score_memo_with_error)
+    save("score_memo.pkl", score_memo_original)
+    save("score_memo_with_error.pkl", score_memo_with_error_original)
 
 
 def get_perplexity_(
-    scorer, score_memo: dict, text: Union[str, list[str]]
+    scorer,
+    score_memo: dict[str, float],
+    score_memo_with_error: dict[str, float],
+    text: Union[str, list[str]],
 ) -> Union[float, list[float]]:
     if isinstance(text, str):
         if text in score_memo:
@@ -90,25 +104,30 @@ def get_perplexity_(
         score_memo[text] = score
         return score
     elif isinstance(text, list):
-        list_score_new = []
         list_text = text
         list_text_new = []
-        for t in list_text:
-            if t not in score_memo:
-                list_text_new.append(t)
+        for text in list_text:
+            if text not in score_memo and text not in score_memo_with_error:
+                list_text_new.append(text)
 
-        if len(list_text_new) > 0:
+        if len(list_text_new):
             list_score_new: list[float] = scorer.get_perplexity(list_text_new)
-
-        if len(list_text_new) == 1:
-            score_memo[list_text_new[0]] = list_score_new[0]
+            if len(list_text_new) == 1:
+                score_memo[list_text_new[0]] = list_score_new[0]
+            else:
+                for text, score in zip(list_text_new, list_score_new):
+                    score_memo_with_error[text] = score
+        else:
+            list_score_new = []
 
         list_score = []
-        for t in list_text:
-            if t in score_memo:
-                list_score.append(score_memo[t])
+        for text in list_text:
+            if text in score_memo:
+                list_score.append(score_memo[text])
+            elif text in score_memo_with_error:
+                list_score.append(score_memo_with_error[text])
             else:
-                list_score.append(list_score_new.pop(0))
+                assert False
 
         return list_score
 
