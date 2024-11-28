@@ -153,7 +153,8 @@ class PerplexityCalculator:
         else:
             self.model = transformers.AutoModelForCausalLM.from_pretrained(
                 model_path,
-                torch_dtype=torch.float16 if DEVICE.type == "cuda" else torch.float32,
+                torch_dtype=torch.float32,
+                # torch_dtype=torch.float16 if DEVICE.type == "cuda" else torch.float32,
                 device_map=device_map,
             )
 
@@ -273,7 +274,7 @@ class PerplexityCalculator:
     #     return ppl[0] if single_input else ppl
 
     def get_perplexity(
-        self, input_texts: Union[str, List[str]], batch_size=256
+        self, input_texts: Union[str, List[str]], batch_size=16
     ) -> Union[float, List[float]]:
         single_input = isinstance(input_texts, str)
         input_texts = [input_texts] if single_input else input_texts

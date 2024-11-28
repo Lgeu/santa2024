@@ -1,12 +1,14 @@
 import pickle
 from pathlib import Path
-from typing import Union
+from typing import Optional, Union
 
 import numpy as np
 import pandas as pd
 
+USE_FP32 = True
+
 path_input_csv = Path("../input/santa-2024/sample_submission.csv")
-path_save = Path("./save")
+path_save = Path("./save_fp32") if USE_FP32 else Path("./save")
 # path_save.mkdir(parents=True, exist_ok=True)
 path_model = Path("../input/gemma-2/")
 
@@ -94,7 +96,7 @@ def save_score_memo(
 def get_perplexity_(
     scorer,
     score_memo: dict[str, float],
-    score_memo_with_error: dict[str, float],
+    score_memo_with_error: Optional[dict[str, float]],
     text: Union[str, list[str]],
 ) -> Union[float, list[float]]:
     if isinstance(text, str):
@@ -107,13 +109,17 @@ def get_perplexity_(
         list_text = text
         list_text_new = []
         for text in list_text:
-            if text not in score_memo and text not in score_memo_with_error:
-                list_text_new.append(text)
+            if text in score_memo:
+                continue
+            elif score_memo_with_error is not None and text in score_memo_with_error:
+                continue
+            list_text_new.append(text)
 
         if len(list_text_new):
             list_score_new: list[float] = scorer.get_perplexity(list_text_new)
-            if len(list_text_new) == 1:
-                score_memo[list_text_new[0]] = list_score_new[0]
+            if len(list_text_new) == 1 or score_memo_with_error is None:
+                for text, score in zip(list_text_new, list_score_new):
+                    score_memo[text] = score
             else:
                 for text, score in zip(list_text_new, list_score_new):
                     score_memo_with_error[text] = score
@@ -124,7 +130,7 @@ def get_perplexity_(
         for text in list_text:
             if text in score_memo:
                 list_score.append(score_memo[text])
-            elif text in score_memo_with_error:
+            elif score_memo_with_error is not None and text in score_memo_with_error:
                 list_score.append(score_memo_with_error[text])
             else:
                 assert False

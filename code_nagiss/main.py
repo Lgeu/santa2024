@@ -11,6 +11,7 @@ import torch
 from evaluation import PerplexityCalculator
 from tqdm.auto import tqdm
 from util import (
+    USE_FP32,
     get_path_words_best,
     get_perplexity_,
     load_score_memo,
@@ -203,7 +204,10 @@ class Optimization:
 
     def _calc_perplexity(self, text: str) -> float:
         return get_perplexity_(
-            self.calculator, self.score_memo, self.score_memo_with_error, text
+            self.calculator,
+            self.score_memo,
+            None if USE_FP32 else self.score_memo_with_error,
+            text,
         )
 
     def _get_best(self, n_idx: int) -> tuple[list[str], float]:
@@ -265,9 +269,9 @@ class Optimization:
                 idx_min = int(np.argmin(list_perplexity_nxt_with_error))
                 words_nxt = list_words_nxt[idx_min]
                 perplexity_nxt_with_error = list_perplexity_nxt_with_error[idx_min]
-                if (
-                    perplexity_nxt_with_error < perplexity_best + 2.0
-                ):  # Cutoff threshold
+                if USE_FP32:
+                    perplexity_nxt = perplexity_nxt_with_error
+                elif perplexity_nxt_with_error < perplexity_best + 2.0:
                     perplexity_nxt = self._calc_perplexity(" ".join(words_nxt))
                 else:
                     perplexity_nxt = perplexity_nxt_with_error
@@ -394,6 +398,6 @@ class Optimization:
 if __name__ == "__main__":
     path_input_csv = Path("../input/santa-2024/sample_submission.csv")
     path_model = Path("../input/gemma-2/")
-    path_save = Path("./save")
+    path_save = Path("./save_fp32") if USE_FP32 else Path("./save")
     optimizer = Optimization(path_input_csv, path_model, path_save)
     optimizer.run([1, 2, 3])

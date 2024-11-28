@@ -112,7 +112,7 @@ def main():
     args = parser.parse_args()
 
     path_input_csv = Path("../input/santa-2024/sample_submission.csv")
-    path_save = Path("./save")
+    path_save = Path("./save_fp32")
     path_save_submissions = path_save / "submissions"
     path_save_submissions.mkdir(parents=True, exist_ok=True)
 
