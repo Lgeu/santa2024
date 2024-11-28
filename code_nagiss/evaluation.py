@@ -273,7 +273,7 @@ class PerplexityCalculator:
     #     return ppl[0] if single_input else ppl
 
     def get_perplexity(
-        self, input_texts: Union[str, List[str]], batch_size=64
+        self, input_texts: Union[str, List[str]], batch_size=256
     ) -> Union[float, List[float]]:
         single_input = isinstance(input_texts, str)
         input_texts = [input_texts] if single_input else input_texts

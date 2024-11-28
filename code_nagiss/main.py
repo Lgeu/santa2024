@@ -185,7 +185,7 @@ class Optimization:
         # 初期化
         self.list_no_update_cnt = [0] * self.n_idx_total
         self.list_num_kick = [1] * self.n_idx_total
-        self.max_no_update_cnt = 10  # キックするまでのイテレーション数
+        self.max_no_update_cnt = 3  # キックするまでのイテレーション数
 
         # 各遷移の選択確率
         self.neighbor_prob = {
@@ -225,33 +225,33 @@ class Optimization:
         n_sample: int = 16,
         verbose: bool = False,
     ) -> tuple[list[str], float]:
-        pbar = tqdm(total=iter_total, mininterval=5)
+        pbar = tqdm(total=iter_total, mininterval=15)
 
         def search(
             words: list[str], last_words: Optional[list[str]] = None, depth: int = 0
         ) -> tuple[float, list[str], list[int]]:
             depth_to_threshold = {
-                0: 1.05,
-                1: 1.02,
-                2: 1.015,
-                3: 1.01,
-                4: 1.005,
-                5: 1.004,
-                6: 1.003,
-                7: 1.002,
-                8: 1.002,
-                9: 1.002,
-                10: 1.001,
-                11: 1.001,
-                12: 1.001,
-                13: 1.001,
-                13: 1.001,
-                14: 1.001,
+                0: 1.1,
+                1: 1.08,
+                2: 1.06,
+                3: 1.04,
+                4: 1.02,
+                5: 1.01,
+                6: 1.008,
+                7: 1.006,
+                8: 1.004,
+                9: 1.004,
+                10: 1.002,
+                11: 1.002,
+                12: 1.002,
+                13: 1.002,
+                13: 1.002,
+                14: 1.002,
                 15: 1.0,
             }
 
             max_depth = depth
-            for _ in itertools.count(0) if depth == 0 else range(10):
+            for _ in itertools.count(0) if depth == 0 else range(3):
                 list_words_nxt: list[list[str]] = []
                 list_texts_nxt: list[str] = []
                 while len(list_words_nxt) < n_sample:
@@ -261,6 +261,7 @@ class Optimization:
                     list_words_nxt.append(words_nxt)
                     list_texts_nxt.append(" ".join(words_nxt))
                 list_perplexity_nxt_with_error = self._calc_perplexity(list_texts_nxt)
+
                 idx_min = int(np.argmin(list_perplexity_nxt_with_error))
                 words_nxt = list_words_nxt[idx_min]
                 perplexity_nxt_with_error = list_perplexity_nxt_with_error[idx_min]
@@ -273,7 +274,21 @@ class Optimization:
 
                 if perplexity_nxt < perplexity_best:
                     return perplexity_nxt, words_nxt, [neighbor_type], max_depth
-                elif perplexity_nxt < perplexity_best * depth_to_threshold[depth]:
+                elif (
+                    min(perplexity_nxt, perplexity_nxt_with_error)
+                    < perplexity_best * depth_to_threshold[depth]
+                ):
+                    # 条件を満たしたものから words_nxt をランダムに再抽選
+                    assert len(list_perplexity_nxt_with_error) == len(list_words_nxt)
+                    words_nxt_candidates: list[list[str]] = [
+                        words_nxt
+                        for perplexity, words_nxt in zip(
+                            list_perplexity_nxt_with_error, list_words_nxt
+                        )
+                        if perplexity < perplexity_best * depth_to_threshold[depth]
+                    ]
+                    if len(words_nxt_candidates):
+                        words_nxt = random.choice(words_nxt_candidates)
                     perplexity_nxt, words_nxt, neighbor_types, max_depth_ = search(
                         words_nxt, words, depth + 1
                     )
@@ -288,7 +303,7 @@ class Optimization:
 
                 if pbar.n >= iter_total:
                     break
-                if pbar.n % 100 == 0:
+                if pbar.n % 500 == 0:
                     print(
                         f"[hillclimbing] iter:{pbar.n} best:{perplexity_best:.2f}"
                         f" nxt:{perplexity_nxt:.2f}"
@@ -327,12 +342,12 @@ class Optimization:
                 i = 1
         flag_reset = n_kick == 0 and i >= 2
         n_kick = i - n_kick
-        n_kick = int(np.sqrt(n_kick)) - 1
+        n_kick = n_kick - 1
         return n_kick, flag_reset
 
     def ILS_kick(self, words: list[str], n_kick: int = 2) -> list[str]:
         for _ in range(n_kick):
-            words = make_neighbor(words, self.neighbor_prob)
+            words, _ = make_neighbor(words, self.neighbor_prob)
         return words
 
     def run(self, list_idx_target: Optional[list[int]] = None):
@@ -348,7 +363,7 @@ class Optimization:
                 words_best,
                 perplexity_best_old,
                 iter_total=1000,
-                n_sample=64,
+                n_sample=256,
                 verbose=True,
             )
             print(f"[run] n_idx:{n_idx} perplexity_best:{perplexity_best:.2f}")
@@ -381,4 +396,4 @@ if __name__ == "__main__":
     path_model = Path("../input/gemma-2/")
     path_save = Path("./save")
     optimizer = Optimization(path_input_csv, path_model, path_save)
-    optimizer.run()
+    optimizer.run([1, 2, 3])
