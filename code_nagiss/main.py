@@ -3,7 +3,7 @@ import gc
 import itertools
 import random
 from pathlib import Path
-from typing import Optional
+from typing import Generator, Optional
 
 import numpy as np
 import pandas as pd
@@ -24,117 +24,74 @@ def free_memory():
     torch.cuda.empty_cache()
 
 
-def make_neighbor_1(words_input: list[str]) -> list[str]:
-    """ランダムに単語を選んでランダムな箇所に挿入"""
-    words = words_input.copy()
-    idx = random.randint(0, len(words) - 1)
-    word = words.pop(idx)
-    idx_insert = random.randint(0, len(words))
-    words.insert(idx_insert, word)
-    return words
+def make_neighbors(
+    words: list[str],
+) -> Generator[tuple[list[str], tuple[int, int, int, int]], None, None]:
+    words = words.copy()
+    found = set()
 
-
-def make_neighbor_2(words_input: list[str]) -> list[str]:
-    """ランダムに単語の列を選んでランダムな箇所に挿入"""
-    words = words_input.copy()
-    idx1 = random.randint(0, len(words))
-    idx2 = random.randint(0, len(words))
-    if idx1 == idx2:
-        return None
-    if idx1 > idx2:
-        idx1, idx2 = idx2, idx1
-    words_mid = words[idx1:idx2]
-    words_rest = words[:idx1] + words[idx2:]
-    idx_insert = random.randint(0, len(words_rest))
-    words_new = words_rest[:idx_insert] + words_mid + words_rest[idx_insert:]
-    return words_new
-
-
-def make_neighbor_3(words_input: list[str]) -> list[str]:
-    """ランダムに単語の列を選んで先頭か末尾に移動"""
-    words = words_input.copy()
-    idx1 = random.randint(1, len(words))
-    idx2 = random.randint(1, len(words))
-    if idx1 == idx2:
-        return None
-    if idx1 > idx2:
-        idx1, idx2 = idx2, idx1
-    words1 = words[:idx1]
-    words2 = words[idx1:idx2]
-    words3 = words[idx2:]
-    coin = random.randint(1, 2)
-    if coin == 1:
-        words_new = words1 + words3 + words2
-    else:
-        words_new = words2 + words1 + words3
-    return words_new
-
-
-def make_neighbor_4(words_input: list[str]) -> list[str]:
-    """Rotate"""
-    words = words_input.copy()
-    idx = random.randint(1, len(words) - 1)
-    words_new = words[idx:] + words[:idx]
-    return words_new
-
-
-def make_neighbor_5(words_input: list[str]) -> list[str]:
-    """隣接した単語を入れ替える"""
-    words = words_input.copy()
-    idx = random.randint(0, len(words) - 2)
-    words[idx], words[idx + 1] = words[idx + 1], words[idx]
-    return words
-
-
-def make_neighbor_6(words_input: list[str]) -> list[str]:
-    """区間を反転する"""
-    words = words_input.copy()
-    idx1 = random.randint(0, len(words))
-    idx2 = (idx1 + random.randint(2, len(words) - 2)) % len(words)
-    if idx1 > idx2:
-        idx1, idx2 = idx2, idx1
-    words[idx1:idx2] = words[idx1:idx2][::-1]
-    return words
-
-
-def make_neighbor_7(words_input: list[str]) -> list[str]:
-    """ランダムな 2 単語を入れ替える"""
-    words = words_input.copy()
-    idx1 = random.randint(0, len(words) - 1)
-    idx2 = (idx1 + random.randint(1, len(words) - 1)) % len(words)
-    words[idx1], words[idx2] = words[idx2], words[idx1]
-    return words
-
-
-def make_neighbor(
-    words_input: list[str], neighbor_prob: dict[int, float]
-) -> tuple[list[str], int]:
-    """ランダムに操作を行う"""
-    words_return = None
-    while words_return is None:
-        coin = int(
-            np.random.choice(list(neighbor_prob.keys()), p=list(neighbor_prob.values()))
-        )
-        if coin == 1:
-            words_return = make_neighbor_1(words_input)
-        elif coin == 2:
-            words_return = make_neighbor_2(words_input)
-        elif coin == 3:
-            words_return = make_neighbor_3(words_input)
-        elif coin == 4:
-            words_return = make_neighbor_4(words_input)
-        elif coin == 5:
-            words_return = make_neighbor_5(words_input)
-        elif coin == 6:
-            words_return = make_neighbor_6(words_input)
-        elif coin == 7:
-            words_return = make_neighbor_7(words_input)
-        else:
-            raise ValueError("Invalid neighbor function coin")
-        if words_return == words_input:
-            words_return = None
-    assert sorted(words_input) == sorted(words_return)
-    return words_return, coin
+    for length in range(1, 5):
+        for center in range(length, len(words) - length + 1):
+            # 右が短い
+            right = center + length
+            for left_length in itertools.count(length):
+                left = center - left_length
+                if left < 0:
+                    break
+                permuted = (
+                    words[:left]
+                    + words[center:right]
+                    + words[left:center]
+                    + words[right:]
+                )
+                if (t := tuple(permuted)) not in found:
+                    found.add(t)
+                    yield permuted, (left, center, right, 0)
+                if length == 2:
+                    permuted = (
+                        words[:left]
+                        + words[center:right][::-1]
+                        + words[left:center]
+                        + words[right:]
+                    )
+                    if (t := tuple(permuted)) not in found:
+                        found.add(t)
+                        yield permuted, (left, center, right, 1)
+                    if left_length == 2:
+                        permuted = (
+                            words[:left]
+                            + words[center:right]
+                            + words[left:center][::-1]
+                            + words[right:]
+                        )
+                        if (t := tuple(permuted)) not in found:
+                            found.add(t)
+                            yield permuted, (left, center, right, 2)
+            # 左が短い
+            left = center - length
+            for right_length in itertools.count(length + 1):
+                right = center + right_length
+                if right > len(words):
+                    break
+                permuted = (
+                    words[:left]
+                    + words[center:right]
+                    + words[left:center]
+                    + words[right:]
+                )
+                if (t := tuple(permuted)) not in found:
+                    found.add(t)
+                    yield permuted, (left, center, right, 0)
+                if length == 2:
+                    permuted = (
+                        words[:left]
+                        + words[center:right]
+                        + words[left:center][::-1]
+                        + words[right:]
+                    )
+                    if (t := tuple(permuted)) not in found:
+                        found.add(t)
+                        yield permuted, (left, center, right, 1)
 
 
 class Optimization:
@@ -183,23 +140,7 @@ class Optimization:
         self.list_perplexity_best_all = copy.deepcopy(self.list_perplexity_best)
 
         # 初期化
-        self.list_no_update_cnt = [0] * self.n_idx_total
         self.list_num_kick = [1] * self.n_idx_total
-        self.max_no_update_cnt = 10  # キックするまでのイテレーション数
-
-        # 各遷移の選択確率
-        self.neighbor_prob = {
-            1: 10.0,
-            2: 5.0,
-            3: 5.0,
-            4: 1.0,
-            5: 1.0,  # パターンが少ない
-            6: 1.0,
-            7: 1.0,
-        }
-        prob_total = sum(self.neighbor_prob.values())
-        for key in self.neighbor_prob:
-            self.neighbor_prob[key] = self.neighbor_prob[key] / prob_total
 
     def _calc_perplexity(self, text: str) -> float:
         return get_perplexity_(
@@ -222,22 +163,23 @@ class Optimization:
         words_best: list[str],
         perplexity_best: float,
         iter_total: int = 1000,
-        n_sample: int = 16,
-        verbose: bool = False,
     ) -> tuple[list[str], float]:
         pbar = tqdm(total=iter_total, mininterval=5)
 
+        visited = set()
+
         def search(
-            words: list[str], last_words: Optional[list[str]] = None, depth: int = 0
+            words: list[str], depth: int = 0
         ) -> tuple[float, list[str], list[int]]:
+            visited.add(tuple(words))
             depth_to_threshold = {
-                0: 1.05,
-                1: 1.02,
-                2: 1.015,
-                3: 1.01,
-                4: 1.005,
-                5: 1.004,
-                6: 1.003,
+                0: 1.01,
+                1: 1.01,
+                2: 1.005,
+                3: 1.005,
+                4: 1.002,
+                5: 1.002,
+                6: 1.002,
                 7: 1.002,
                 8: 1.002,
                 9: 1.002,
@@ -250,23 +192,29 @@ class Optimization:
                 15: 1.0,
             }
 
+            neighbors = make_neighbors(words)
             max_depth = depth
-            for _ in itertools.count(0) if depth == 0 else range(10):
+            for _ in itertools.count(0):
                 list_words_nxt: list[list[str]] = []
                 list_texts_nxt: list[str] = []
-                while len(list_words_nxt) < n_sample:
-                    words_nxt, neighbor_type = make_neighbor(words, self.neighbor_prob)
-                    if words_nxt == last_words:
-                        continue
-                    list_words_nxt.append(words_nxt)
-                    list_texts_nxt.append(" ".join(words_nxt))
+
+                while len(list_words_nxt) < 128:
+                    try:
+                        words_nxt, neighbor_type = next(neighbors)
+                        if tuple(words_nxt) in visited:
+                            continue
+                        list_words_nxt.append(words_nxt)
+                        list_texts_nxt.append(" ".join(words_nxt))
+                    except StopIteration:
+                        break
+                if len(list_words_nxt) == 0:
+                    return None, None, None, max_depth
+
                 list_perplexity_nxt_with_error = self._calc_perplexity(list_texts_nxt)
                 idx_min = int(np.argmin(list_perplexity_nxt_with_error))
                 words_nxt = list_words_nxt[idx_min]
                 perplexity_nxt_with_error = list_perplexity_nxt_with_error[idx_min]
-                if (
-                    perplexity_nxt_with_error < perplexity_best + 2.0
-                ):  # Cutoff threshold
+                if perplexity_nxt_with_error < perplexity_best + 2.0:
                     perplexity_nxt = self._calc_perplexity(" ".join(words_nxt))
                 else:
                     perplexity_nxt = perplexity_nxt_with_error
@@ -274,17 +222,28 @@ class Optimization:
                 if perplexity_nxt < perplexity_best:
                     return perplexity_nxt, words_nxt, [neighbor_type], max_depth
                 elif perplexity_nxt < perplexity_best * depth_to_threshold[depth]:
-                    perplexity_nxt, words_nxt, neighbor_types, max_depth_ = search(
-                        words_nxt, words, depth + 1
-                    )
-                    max_depth = max(max_depth, max_depth_)
-                    if perplexity_nxt < perplexity_best:
-                        return (
-                            perplexity_nxt,
-                            words_nxt,
-                            [neighbor_type] + neighbor_types,
-                            max_depth,
+                    for words_nxt, perplexity_nxt in zip(
+                        list_words_nxt, list_perplexity_nxt_with_error
+                    ):
+                        if (
+                            perplexity_nxt
+                            >= perplexity_best * depth_to_threshold[depth]
+                        ):
+                            continue
+                        if tuple(words_nxt) in visited:
+                            continue
+                        perplexity_nxt, words_nxt, neighbor_types, max_depth_ = search(
+                            words_nxt, depth + 1
                         )
+                        max_depth = max(max_depth, max_depth_)
+                        if perplexity_nxt is not None:
+                            assert perplexity_nxt < perplexity_best
+                            return (
+                                perplexity_nxt,
+                                words_nxt,
+                                [neighbor_type] + neighbor_types,
+                                max_depth,
+                            )
 
                 if pbar.n >= iter_total:
                     break
@@ -296,10 +255,10 @@ class Optimization:
                         f" depth:{depth}"
                     )
                 pbar.update(1)
-            return perplexity_nxt, words_nxt, [neighbor_type], max_depth
 
         perplexity_nxt, words_nxt, neighbor_types, max_depth = search(words_best)
-        if perplexity_nxt < perplexity_best:
+        if perplexity_nxt is not None:
+            assert perplexity_nxt < perplexity_best
             print(
                 f"[hillclimbing] Update: {perplexity_best:.2f}"
                 f" -> {perplexity_nxt:.2f},"
@@ -327,16 +286,20 @@ class Optimization:
                 i = 1
         flag_reset = n_kick == 0 and i >= 2
         n_kick = i - n_kick
-        n_kick = int(np.sqrt(n_kick)) - 1
+        n_kick = n_kick - 1
         return n_kick, flag_reset
 
     def ILS_kick(
         self, words: list[str], n_kick: int = 2
     ) -> tuple[list[str], list[int]]:
-        neighbor_types = []
-        for _ in range(n_kick):
-            words, neighbor_type = make_neighbor(words, self.neighbor_prob)
-            neighbor_types.append(neighbor_type)
+        r = random.randint(1, len(words) - 1)
+        words = words[r:] + words[:r]
+        neighbor_types = [(r,)]
+        for _ in range(n_kick - 1):
+            r0 = random.randint(0, len(words) - 1)
+            r1 = random.randint(0, len(words) - 1)
+            words[r0], words[r1] = words[r1], words[r0]
+            neighbor_types.append((r0, r1))
         return words, neighbor_types
 
     def run(self, list_idx_target: Optional[list[int]] = None):
@@ -351,29 +314,20 @@ class Optimization:
             words_best, perplexity_best = self._hillclimbing(
                 words_best,
                 perplexity_best_old,
-                iter_total=1000,
-                n_sample=64,
-                verbose=True,
+                iter_total=10**9,
             )
             print(f"[run] n_idx:{n_idx} perplexity_best:{perplexity_best:.2f}")
             did_kick = False
             if perplexity_best_old == perplexity_best:
-                self.list_no_update_cnt[n_idx] += 1
-                if self.list_no_update_cnt[n_idx] >= self.max_no_update_cnt:
-                    n_kick, flag_reset = self._calc_n_kick_and_reset(n_idx)
-                    self.list_num_kick[n_idx] += 1
-                    did_kick = True
-                    self.list_no_update_cnt[n_idx] = 0
-                    if flag_reset:
-                        print("[run] Reset words")
-                        words_best = self._get_best_all(n_idx)[0]
-                    words_best, neighbor_types = self.ILS_kick(
-                        words_best, n_kick=n_kick
-                    )
-                    print(f"[run] Apply {n_kick} kicks: {neighbor_types}")
-                    perplexity_best = self._calc_perplexity(" ".join(words_best))
-            else:
-                self.list_no_update_cnt[n_idx] = 0
+                n_kick, flag_reset = self._calc_n_kick_and_reset(n_idx)
+                self.list_num_kick[n_idx] += 1
+                did_kick = True
+                if flag_reset:
+                    print("[run] Reset words")
+                    words_best = self._get_best_all(n_idx)[0]
+                words_best, neighbor_types = self.ILS_kick(words_best, n_kick=n_kick)
+                print(f"[run] Apply {n_kick} kicks: {neighbor_types}")
+                perplexity_best = self._calc_perplexity(" ".join(words_best))
             self.list_words_best[n_idx] = words_best
             self.list_perplexity_best[n_idx] = perplexity_best
             self._update_best_all(n_idx, words_best, perplexity_best)
