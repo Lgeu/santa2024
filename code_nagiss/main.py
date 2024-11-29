@@ -2,10 +2,10 @@ import copy
 import gc
 import itertools
 import random
+from collections import deque
 from pathlib import Path
 from typing import Generator, Optional
 
-import numpy as np
 import pandas as pd
 import torch
 from evaluation import PerplexityCalculator
@@ -164,14 +164,13 @@ class Optimization:
         perplexity_best: float,
         iter_total: int = 1000,
     ) -> tuple[list[str], float]:
-        pbar = tqdm(total=iter_total, mininterval=5)
+        pbar = tqdm(total=iter_total, mininterval=30)
 
         visited = set()
 
         def search(
             words: list[str], depth: int = 0
         ) -> tuple[float, list[str], list[int]]:
-            visited.add(tuple(words))
             depth_to_threshold = {
                 0: 1.01,
                 1: 1.01,
@@ -192,74 +191,81 @@ class Optimization:
                 15: 1.0,
             }
 
-            neighbors = make_neighbors(words)
-            max_depth = depth
-            for _ in itertools.count(0):
-                list_words_nxt: list[list[str]] = []
-                list_texts_nxt: list[str] = []
-                list_neighbor_type: list = []
+            queue: deque[tuple[list[str], list, int]] = deque()
+            queue.append((words, [], 0))  # words, neighbor_types, depth
 
-                while len(list_words_nxt) < 128:
-                    try:
-                        words_nxt, neighbor_type = next(neighbors)
-                        if tuple(words_nxt) in visited:
-                            continue
-                        list_words_nxt.append(words_nxt)
-                        list_texts_nxt.append(" ".join(words_nxt))
-                        list_neighbor_type.append(neighbor_type)
-                    except StopIteration:
+            while queue:
+                words_curr, neighbor_types_curr, depth = queue.popleft()
+                if (t := tuple(words_curr)) in visited:
+                    continue
+                visited.add(t)
+
+                neighbors = make_neighbors(words_curr)
+                while True:
+                    list_words_nxt: list[list[str]] = []
+                    list_texts_nxt: list[str] = []
+                    list_neighbor_type: list = []
+
+                    while len(list_words_nxt) < 128:
+                        try:
+                            words_nxt, neighbor_type = next(neighbors)
+                            if tuple(words_nxt) in visited:
+                                continue
+                            list_words_nxt.append(words_nxt)
+                            list_texts_nxt.append(" ".join(words_nxt))
+                            list_neighbor_type.append(neighbor_type)
+                        except StopIteration:
+                            break
+                    if not list_words_nxt:
                         break
-                if len(list_words_nxt) == 0:
-                    return None, None, None, max_depth
 
-                list_perplexity_nxt_with_error = self._calc_perplexity(list_texts_nxt)
-                idx_min = int(np.argmin(list_perplexity_nxt_with_error))
-                words_nxt = list_words_nxt[idx_min]
-                perplexity_nxt_with_error = list_perplexity_nxt_with_error[idx_min]
-                neighbor_type = list_neighbor_type[idx_min]
-                if perplexity_nxt_with_error < perplexity_best + 2.0:
-                    perplexity_nxt = self._calc_perplexity(" ".join(words_nxt))
-                else:
-                    perplexity_nxt = perplexity_nxt_with_error
+                    list_perplexity_nxt_with_error = self._calc_perplexity(
+                        list_texts_nxt
+                    )
+                    idx_min, perplexity_nxt_with_error = min(
+                        enumerate(list_perplexity_nxt_with_error), key=lambda x: x[1]
+                    )
+                    words_nxt = list_words_nxt[idx_min]
+                    neighbor_type = list_neighbor_type[idx_min]
+                    if perplexity_nxt_with_error < perplexity_best + 2.0:
+                        perplexity_nxt = self._calc_perplexity(" ".join(words_nxt))
+                    else:
+                        perplexity_nxt = perplexity_nxt_with_error
 
-                if perplexity_nxt < perplexity_best:
-                    return perplexity_nxt, words_nxt, [neighbor_type], max_depth
-                elif perplexity_nxt < perplexity_best * depth_to_threshold[depth]:
-                    for words_nxt, perplexity_nxt, neighbor_type in zip(
+                    if perplexity_nxt < perplexity_best:
+                        return (
+                            perplexity_nxt,
+                            words_nxt,
+                            neighbor_types_curr + [neighbor_type],
+                            depth,
+                        )
+
+                    for words_nxt, perplexity_nxt_with_error, neighbor_type in zip(
                         list_words_nxt,
                         list_perplexity_nxt_with_error,
                         list_neighbor_type,
                     ):
                         if (
-                            perplexity_nxt
-                            >= perplexity_best * depth_to_threshold[depth]
+                            perplexity_nxt_with_error
+                            < perplexity_best * depth_to_threshold[depth]
                         ):
-                            continue
-                        if tuple(words_nxt) in visited:
-                            continue
-                        perplexity_nxt, words_nxt, neighbor_types, max_depth_ = search(
-                            words_nxt, depth + 1
-                        )
-                        max_depth = max(max_depth, max_depth_)
-                        if perplexity_nxt is not None:
-                            assert perplexity_nxt < perplexity_best
-                            return (
-                                perplexity_nxt,
-                                words_nxt,
-                                [neighbor_type] + neighbor_types,
-                                max_depth,
+                            queue.append(
+                                (
+                                    words_nxt,
+                                    neighbor_types_curr + [neighbor_type],
+                                    depth + 1,
+                                )
                             )
 
-                if pbar.n >= iter_total:
-                    break
-                if pbar.n % 100 == 0:
-                    print(
-                        f"[hillclimbing] iter:{pbar.n} best:{perplexity_best:.2f}"
-                        f" nxt:{perplexity_nxt:.2f}"
-                        f" neighbor:{neighbor_type}"
-                        f" depth:{depth}"
-                    )
-                pbar.update(1)
+                    if pbar.n >= iter_total:
+                        return None, None, None, depth
+                    if pbar.n % 200 == 0:
+                        print(
+                            f"[hillclimbing] iter:{pbar.n} best:{perplexity_best:.2f}"
+                            f" depth:{depth}"
+                        )
+                    pbar.update(1)
+            return None, None, None, depth
 
         perplexity_nxt, words_nxt, neighbor_types, max_depth = search(words_best)
         if perplexity_nxt is not None:
