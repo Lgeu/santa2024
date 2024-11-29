@@ -30,7 +30,7 @@ def make_neighbors(
     words = words.copy()
     found = set()
 
-    for length in range(1, 5):
+    for length in range(1, 2):
         for center in range(length, len(words) - length + 1):
             # 右が短い
             right = center + length
@@ -172,23 +172,28 @@ class Optimization:
             words: list[str], depth: int = 0
         ) -> tuple[float, list[str], list[int]]:
             depth_to_threshold = {
-                0: 1.01,
-                1: 1.01,
-                2: 1.005,
-                3: 1.005,
-                4: 1.002,
-                5: 1.002,
-                6: 1.002,
-                7: 1.002,
-                8: 1.002,
-                9: 1.002,
-                10: 1.001,
-                11: 1.001,
-                12: 1.001,
-                13: 1.001,
-                13: 1.001,
-                14: 1.001,
-                15: 1.0,
+                0: 1.2,
+                1: 1.2,
+                2: 1.1,
+                3: 1.1,
+                4: 1.05,
+                5: 1.05,
+                6: 1.05,
+                7: 1.05,
+                8: 1.05,
+                9: 1.05,
+                10: 1.02,
+                11: 1.02,
+                12: 1.02,
+                13: 1.02,
+                13: 1.02,
+                14: 1.02,
+                15: 1.01,
+                16: 1.01,
+                17: 1.01,
+                18: 1.01,
+                19: 1.01,
+                20: 1.0,
             }
 
             queue: deque[tuple[list[str], list, int]] = deque()
@@ -206,7 +211,7 @@ class Optimization:
                     list_texts_nxt: list[str] = []
                     list_neighbor_type: list = []
 
-                    while len(list_words_nxt) < 128:
+                    while len(list_words_nxt) < 256:
                         try:
                             words_nxt, neighbor_type = next(neighbors)
                             if tuple(words_nxt) in visited:
@@ -352,4 +357,4 @@ if __name__ == "__main__":
     path_model = Path("../input/gemma-2/")
     path_save = Path("./save")
     optimizer = Optimization(path_input_csv, path_model, path_save)
-    optimizer.run()
+    optimizer.run([1, 2, 3])
