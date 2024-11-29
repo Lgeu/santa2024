@@ -331,7 +331,7 @@ class Optimization:
             self.list_words_best[n_idx] = words_best
             self.list_perplexity_best[n_idx] = perplexity_best
             self._update_best_all(n_idx, words_best, perplexity_best)
-            if not did_kick:
+            if not did_kick and perplexity_best < self._get_best_all(n_idx)[1] * 1.1:
                 save_text(self._calc_perplexity, n_idx, " ".join(words_best), verbose=1)
             save_score_memo(self.score_memo, self.score_memo_with_error)
 

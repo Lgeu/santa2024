@@ -20,7 +20,7 @@ def get_best_txt_file(
     list_scores_paths: list[tuple[float, Path]] = []
     for path in list_path_txt:
         try:
-            score = float(path.stem)
+            score = float(path.stem.split("_")[0])
             list_scores_paths.append((score, path))
         except ValueError:
             print(f"Invalid filename {path}, cannot convert to float.")

@@ -1,3 +1,4 @@
+import hashlib
 import pickle
 from pathlib import Path
 from typing import Union
@@ -21,17 +22,11 @@ def get_path_words_best(n_idx):
     list_path_txt = list(path_txt)
     if len(list_path_txt) == 0:
         return None, None
-    list_scores = [float(path.stem) for path in list_path_txt]
-    # print(list_scores)
-    # get min score
+    list_scores = [float(path.stem.split("_")[0]) for path in list_path_txt]
     idx_min = np.argmin(list_scores)
     score = list_scores[idx_min]
-    # get min score path
     path_min = list_path_txt[idx_min]
-    # print(path_min)
-    # get min score text
     text_min = path_min.read_text()
-    # get min score words
     words_min = text_min.split(" ")
     assert sorted(words_min) == sorted(words_original)
 
@@ -54,7 +49,8 @@ def save_text(get_perplexity, n_idx, text, verbose=0):
         print(f"score:{score:.4f}")
     if verbose >= 2:
         print(text)
-    path_save_text = path_save_idx / f"{score:.4f}.txt"
+    md5 = hashlib.md5(text.encode()).hexdigest()
+    path_save_text = path_save_idx / f"{score:.4f}_{md5}.txt"
 
     with path_save_text.open("w") as f:
         f.write(text)
