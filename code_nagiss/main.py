@@ -197,6 +197,7 @@ class Optimization:
             for _ in itertools.count(0):
                 list_words_nxt: list[list[str]] = []
                 list_texts_nxt: list[str] = []
+                list_neighbor_type: list = []
 
                 while len(list_words_nxt) < 128:
                     try:
@@ -205,6 +206,7 @@ class Optimization:
                             continue
                         list_words_nxt.append(words_nxt)
                         list_texts_nxt.append(" ".join(words_nxt))
+                        list_neighbor_type.append(neighbor_type)
                     except StopIteration:
                         break
                 if len(list_words_nxt) == 0:
@@ -214,6 +216,7 @@ class Optimization:
                 idx_min = int(np.argmin(list_perplexity_nxt_with_error))
                 words_nxt = list_words_nxt[idx_min]
                 perplexity_nxt_with_error = list_perplexity_nxt_with_error[idx_min]
+                neighbor_type = list_neighbor_type[idx_min]
                 if perplexity_nxt_with_error < perplexity_best + 2.0:
                     perplexity_nxt = self._calc_perplexity(" ".join(words_nxt))
                 else:
@@ -222,8 +225,10 @@ class Optimization:
                 if perplexity_nxt < perplexity_best:
                     return perplexity_nxt, words_nxt, [neighbor_type], max_depth
                 elif perplexity_nxt < perplexity_best * depth_to_threshold[depth]:
-                    for words_nxt, perplexity_nxt in zip(
-                        list_words_nxt, list_perplexity_nxt_with_error
+                    for words_nxt, perplexity_nxt, neighbor_type in zip(
+                        list_words_nxt,
+                        list_perplexity_nxt_with_error,
+                        list_neighbor_type,
                     ):
                         if (
                             perplexity_nxt
