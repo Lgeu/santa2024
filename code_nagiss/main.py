@@ -3,6 +3,7 @@ import gc
 import itertools
 import random
 from pathlib import Path
+from time import time
 from typing import Generator, Optional
 
 import numpy as np
@@ -119,6 +120,7 @@ class Optimization:
         self.n_idx_total = len(self.df)
         self.calculator = PerplexityCalculator(model_path=str(self.path_model))
         self.score_memo, self.score_memo_with_error = load_score_memo()
+        self.last_time_score_memo_saved = time()
 
         # 現在までの最良の解
         self.list_words_best: list[list[str]] = []
@@ -342,7 +344,9 @@ class Optimization:
             self._update_best_all(n_idx, words_best, perplexity_best)
             if not did_kick and perplexity_best < self._get_best_all(n_idx)[1] * 1.1:
                 save_text(self._calc_perplexity, n_idx, " ".join(words_best), verbose=1)
-            save_score_memo(self.score_memo, self.score_memo_with_error)
+            if time() > self.last_time_score_memo_saved + 600:
+                save_score_memo(self.score_memo, self.score_memo_with_error)
+                self.last_time_score_memo_saved = time()
 
 
 if __name__ == "__main__":
