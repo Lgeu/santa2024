@@ -168,9 +168,9 @@ class Optimization:
         self,
         words_best: list[str],
         perplexity_best: float,
-        iter_total: int = 1000,
+        iter_total: int = 2000,
     ) -> tuple[list[str], float]:
-        pbar = tqdm(total=iter_total, mininterval=5)
+        pbar = tqdm(total=iter_total, mininterval=30)
 
         visited = set()
 
@@ -257,7 +257,7 @@ class Optimization:
                             )
 
                 if pbar.n >= iter_total:
-                    break
+                    return None, None, None, max_depth
                 if pbar.n % 100 == 0:
                     print(
                         f"[hillclimbing] iter:{pbar.n} best:{perplexity_best:.2f}"
@@ -303,14 +303,18 @@ class Optimization:
     def ILS_kick(
         self, words: list[str], n_kick: int = 2
     ) -> tuple[list[str], list[int]]:
-        r = random.randint(1, len(words) - 1)
-        words = words[r:] + words[:r]
-        neighbor_types = [(r,)]
-        for _ in range(n_kick - 1):
-            r0 = random.randint(0, len(words) - 1)
-            r1 = random.randint(0, len(words) - 1)
-            words[r0], words[r1] = words[r1], words[r0]
-            neighbor_types.append((r0, r1))
+        neighbor_types = []
+        for i in range(n_kick):
+            if i % 4 == 3:
+                r = random.randint(1, len(words) - 1)
+                words = words[r:] + words[:r]
+                neighbor_types.append((r,))
+            else:
+                for _ in range(8):
+                    r0 = random.randint(0, len(words) - 1)
+                    r1 = random.randint(0, len(words) - 1)
+                    words[r0], words[r1] = words[r1], words[r0]
+                    neighbor_types.append((r0, r1))
         return words, neighbor_types
 
     def run(self, list_idx_target: Optional[list[int]] = None):
@@ -325,7 +329,7 @@ class Optimization:
             words_best, perplexity_best = self._hillclimbing(
                 words_best,
                 perplexity_best_old,
-                iter_total=10**9,
+                iter_total=2000,
             )
             print(f"[run] n_idx:{n_idx} perplexity_best:{perplexity_best:.2f}")
             did_kick = False
