@@ -2,5 +2,8 @@ leaderboard
 **/save*
 
 *.pyc
+__pycache__
 
 input/gemma-2
+
+submissions
