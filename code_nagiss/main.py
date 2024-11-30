@@ -31,7 +31,9 @@ def make_neighbors(
     found = set()
 
     for length in range(1, 5):
-        for center in range(length, len(words) - length + 1):
+        r = range(length, len(words) - length + 1)
+        for center in random.sample(r, len(r)):
+            results = []
             # 右が短い
             right = center + length
             for left_length in itertools.count(length):
@@ -46,7 +48,7 @@ def make_neighbors(
                 )
                 if (t := tuple(permuted)) not in found:
                     found.add(t)
-                    yield permuted, (left, center, right, 0)
+                    results.append((permuted, (left, center, right, 0)))
                 if length == 2:
                     permuted = (
                         words[:left]
@@ -56,7 +58,7 @@ def make_neighbors(
                     )
                     if (t := tuple(permuted)) not in found:
                         found.add(t)
-                        yield permuted, (left, center, right, 1)
+                        results.append((permuted, (left, center, right, 1)))
                     if left_length == 2:
                         permuted = (
                             words[:left]
@@ -66,7 +68,7 @@ def make_neighbors(
                         )
                         if (t := tuple(permuted)) not in found:
                             found.add(t)
-                            yield permuted, (left, center, right, 2)
+                            results.append((permuted, (left, center, right, 2)))
             # 左が短い
             left = center - length
             for right_length in itertools.count(length + 1):
@@ -81,7 +83,7 @@ def make_neighbors(
                 )
                 if (t := tuple(permuted)) not in found:
                     found.add(t)
-                    yield permuted, (left, center, right, 0)
+                    results.append((permuted, (left, center, right, 0)))
                 if length == 2:
                     permuted = (
                         words[:left]
@@ -91,7 +93,9 @@ def make_neighbors(
                     )
                     if (t := tuple(permuted)) not in found:
                         found.add(t)
-                        yield permuted, (left, center, right, 1)
+                        results.append((permuted, (left, center, right, 1)))
+            random.shuffle(results)
+            yield from results
 
 
 class Optimization:
