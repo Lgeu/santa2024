@@ -290,6 +290,7 @@ class Optimization:
                         f" depth:{depth}"
                     )
                 pbar.update(1)
+                self.save_score_memo_if_needed()
 
         words_nxt, perplexity_nxt, depth, neighbor_types = search(words_best, perplexity_best)
 
@@ -348,7 +349,12 @@ class Optimization:
             break # TODO: n_kick = 1 for now
         assert sorted(words) == sorted(words_orig)
         return words, neighbor_types
-    
+
+    def save_score_memo_if_needed(self):
+        if time() > self.last_time_score_memo_saved + 600:
+            save_score_memo(self.score_memo, self.score_memo_with_error)
+            self.last_time_score_memo_saved = time()
+
     def run(self, list_idx_target: Optional[list[int]] = None):
         n_idx = 0
         if list_idx_target is None:
@@ -380,9 +386,8 @@ class Optimization:
             self._update_best_all(n_idx, words_best, perplexity_best)
             if not did_kick and perplexity_best < self._get_best_all(n_idx)[1] * 1.1:
                 save_text(self._calc_perplexity, n_idx, " ".join(words_best), verbose=1)
-            if time() > self.last_time_score_memo_saved + 600:
-                save_score_memo(self.score_memo, self.score_memo_with_error)
-                self.last_time_score_memo_saved = time()
+
+            self.save_score_memo_if_needed()
 
 # %%
 if __name__ == "__main__":
