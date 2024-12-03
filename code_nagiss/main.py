@@ -1,3 +1,4 @@
+import argparse
 import copy
 import gc
 import itertools
@@ -20,7 +21,16 @@ from util import (
     save_text,
 )
 
+
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-i", "--idx", type=int, required=True)
+    args = parser.parse_args()
+    return args
+
+
 # %%
+
 
 def free_memory():
     gc.collect()
@@ -216,114 +226,96 @@ class Optimization:
         self,
         words_best: list[str],
         perplexity_best: float,
-        iter_total: int = 2000,
+        idx_target: int,
     ) -> tuple[list[str], float]:
-        
-        pbar = tqdm(total=iter_total, mininterval=30)
+        pbar = tqdm()
+        pqueue = PriorityQueue([(perplexity_best, words_best, 0, [])])
 
+        visited = set()
+        visited.add(tuple(words_best))
 
-        def search(words_best: list[str], perplexity_best: float):
-            visited = set()
-            pqueue = PriorityQueue([(perplexity_best, words_best, 0, [])])
-            threshold = 1.015
-            max_depth = 0
+        while True:
+            perplexity_nxt_with_error, words_nxt, depth, neighbor_types = pqueue.pop()
+            print(f" {perplexity_nxt_with_error=}")
 
-            for _ in itertools.count(0):
-                while True:
-                    if len(pqueue) == 0:
-                        return None, None, max_depth, None
+            if perplexity_nxt_with_error < perplexity_best + 2.0:
+                perplexity_nxt = self._calc_perplexity(" ".join(words_nxt))
+            else:
+                perplexity_nxt = perplexity_nxt_with_error
 
-                    perplexity_nxt_with_error, words_nxt, depth, neighbor_types = pqueue.pop()
+            if perplexity_nxt < perplexity_best:
+                print(
+                    f"[hillclimbing] iter:{pbar.n} Update: {perplexity_best:.2f}"
+                    f" -> {perplexity_nxt:.2f},"
+                    f" neighbor:{','.join(map(str, neighbor_types))}"
+                    f" depth:{depth}"
+                )
+                perplexity_best = perplexity_nxt
+                words_best = words_nxt
+                save_text(
+                    self._calc_perplexity, idx_target, " ".join(words_best), verbose=1
+                )
 
+            neighbors = make_neighbors(words_nxt)
+
+            list_words_nxt: list[list[str]] = []
+            list_texts_nxt: list[str] = []
+            list_neighbor_type: list = []
+
+            while True:
+                try:
+                    words_nxt, neighbor_type = next(neighbors)
                     if tuple(words_nxt) in visited:
                         continue
-                    visited.add(tuple(words_nxt))
-
-                    if perplexity_nxt_with_error >= perplexity_best * threshold:
-                        return None, None, max_depth, None
-                    max_depth = max(max_depth, depth)
+                    list_words_nxt.append(words_nxt)
+                    list_texts_nxt.append(" ".join(words_nxt))
+                    list_neighbor_type.append(neighbor_type)
+                except StopIteration:
                     break
 
-                if perplexity_nxt_with_error < perplexity_best + 2.0:
-                    perplexity_nxt = self._calc_perplexity(" ".join(words_nxt))
-                else:
-                    perplexity_nxt = perplexity_nxt_with_error
+            if len(list_words_nxt) == 0:
+                continue
 
-                if perplexity_nxt < perplexity_best:
-                    return words_nxt, perplexity_nxt, depth, neighbor_types
-                
-                neighbors = make_neighbors(words_nxt)
-
-                list_words_nxt: list[list[str]] = []
-                list_texts_nxt: list[str] = []
-                list_neighbor_type: list = []
-
-                while len(list_words_nxt) < 128 * 8:
-                    try:
-                        words_nxt, neighbor_type = next(neighbors)
-                        if tuple(words_nxt) in visited:
-                            continue
-                        list_words_nxt.append(words_nxt)
-                        list_texts_nxt.append(" ".join(words_nxt))
-                        list_neighbor_type.append(neighbor_type)
-                    except StopIteration:
-                        break
-
-                if len(list_words_nxt) == 0:
-                    continue
-
-                list_perplexity_nxt_with_error = self._calc_perplexity(list_texts_nxt)
-                for words_nxt, perplexity_nxt_with_error, neighbor_type in zip(
-                    list_words_nxt,
-                    list_perplexity_nxt_with_error,
-                    list_neighbor_type,
-                ):
-                    pqueue.push((perplexity_nxt_with_error, words_nxt, depth + 1, [neighbor_type] + neighbor_types))
-
-                if pbar.n >= iter_total:
-                    return None, None, max_depth, None
-                if pbar.n % 100 == 0:
-                    print(
-                        f"[hillclimbing] iter:{pbar.n} best:{perplexity_best:.2f}"
-                        f" nxt:{perplexity_nxt:.2f}"
-                        f" neighbor:{neighbor_type}"
-                        f" depth:{depth}"
+            list_perplexity_nxt_with_error = self._calc_perplexity(list_texts_nxt)
+            for words_nxt, perplexity_nxt_with_error, neighbor_type in zip(
+                list_words_nxt,
+                list_perplexity_nxt_with_error,
+                list_neighbor_type,
+            ):
+                visited.add(tuple(words_nxt))
+                pqueue.push(
+                    (
+                        perplexity_nxt_with_error,
+                        words_nxt,
+                        depth + 1,
+                        [neighbor_type] + neighbor_types,
                     )
-                pbar.update(1)
+                )
 
-        words_nxt, perplexity_nxt, depth, neighbor_types = search(words_best, perplexity_best)
+            if time() > self.last_time_score_memo_saved + 20:
+                print("start save_score_memo")
+                save_score_memo(self.score_memo, self.score_memo_with_error)
+                self.last_time_score_memo_saved = time()
+                print("end save_score_memo")
 
-        if perplexity_nxt is not None:
-            assert perplexity_nxt < perplexity_best
-            print(
-                f"[hillclimbing] Update: {perplexity_best:.2f}"
-                f" -> {perplexity_nxt:.2f},"
-                f" neighbor:{','.join(map(str, neighbor_types))}"
-                f" depth:{depth}"
-            )
-            perplexity_best = perplexity_nxt
-            words_best = words_nxt
-        else:
-            print(f"[hillclimbing] No update, depth:{depth}")
+            pbar.update(1)
 
-        return words_best, perplexity_best
-
-    def _calc_n_kick_and_reset(self, n_idx) -> tuple[int, bool]:
-        """??????????"""
-        n_kick: int = self.list_num_kick[n_idx]
-        i = 1
-        while True:
-            if n_kick >= i:
-                n_kick -= i
-            else:
-                break
-            i += 1
-            if i > 16:
-                i = 1
-        flag_reset = n_kick == 0 and i >= 2
-        n_kick = i - n_kick
-        n_kick = n_kick - 1
-        return n_kick, flag_reset
+    # def _calc_n_kick_and_reset(self, n_idx) -> tuple[int, bool]:
+    #     """??????????"""
+    #     n_kick: int = self.list_num_kick[n_idx]
+    #     i = 1
+    #     while True:
+    #         if n_kick >= i:
+    #             n_kick -= i
+    #         else:
+    #             break
+    #         i += 1
+    #         if i > 16:
+    #             i = 1
+    #     flag_reset = n_kick == 0 and i >= 2
+    #     n_kick = i - n_kick
+    #     n_kick = n_kick - 1
+    #     return n_kick, flag_reset
 
     # def ILS_kick(
     #     self, words: list[str], n_kick: int = 2
@@ -336,56 +328,33 @@ class Optimization:
     #         neighbor_types.append((r0, r1))
     #     return words, neighbor_types
 
-    def ILS_kick(self, words: list[str], n_kick: int = 2) -> tuple[list[str], list[int]]:
-        # double bridge kick
-        words_orig = words.copy()
-        neighbor_types = []
-        for _ in range(n_kick):
-            r0, r1, r2, r3 = random.sample(range(1, len(words)), 4)
-            r0, r1, r2, r3 = sorted([r0, r1, r2, r3])
-            neighbor_types.append((r0, r1, r2, r3))
-            words = words[:r0] + words[r2:r3] + words[r1:r2] + words[r0:r1] + words[r3:]
-            break # TODO: n_kick = 1 for now
-        assert sorted(words) == sorted(words_orig)
-        return words, neighbor_types
-    
-    def run(self, list_idx_target: Optional[list[int]] = None):
-        n_idx = 0
-        if list_idx_target is None:
-            list_idx_target = list(range(self.n_idx_total))
-        for n_idx in itertools.cycle(list_idx_target):
-            free_memory()
-            words_best, perplexity_best_old = self._get_best(n_idx)
-            print("#" * 80)
-            print(f"[run] n_idx:{n_idx} perplexity_best:{perplexity_best_old:.2f}")
-            words_best, perplexity_best = self._hillclimbing(
-                words_best,
-                perplexity_best_old,
-                iter_total=5000,
-            )
-            print(f"[run] n_idx:{n_idx} perplexity_best:{perplexity_best:.2f}")
-            did_kick = False
-            if perplexity_best_old == perplexity_best:
-                n_kick, flag_reset = self._calc_n_kick_and_reset(n_idx)
-                self.list_num_kick[n_idx] += 1
-                did_kick = True
-                if flag_reset:
-                    print("[run] Reset words")
-                    words_best = self._get_best_all(n_idx)[0]
-                words_best, neighbor_types = self.ILS_kick(words_best, n_kick=n_kick)
-                print(f"[run] Apply {n_kick} kicks: {neighbor_types}")
-                perplexity_best = self._calc_perplexity(" ".join(words_best))
-            self.list_words_best[n_idx] = words_best
-            self.list_perplexity_best[n_idx] = perplexity_best
-            self._update_best_all(n_idx, words_best, perplexity_best)
-            if not did_kick and perplexity_best < self._get_best_all(n_idx)[1] * 1.1:
-                save_text(self._calc_perplexity, n_idx, " ".join(words_best), verbose=1)
-            if time() > self.last_time_score_memo_saved + 600:
-                save_score_memo(self.score_memo, self.score_memo_with_error)
-                self.last_time_score_memo_saved = time()
+    # def ILS_kick(self, words: list[str], n_kick: int = 2) -> tuple[list[str], list[int]]:
+    #     # double bridge kick
+    #     words_orig = words.copy()
+    #     neighbor_types = []
+    #     for _ in range(n_kick):
+    #         r0, r1, r2, r3 = random.sample(range(1, len(words)), 4)
+    #         r0, r1, r2, r3 = sorted([r0, r1, r2, r3])
+    #         neighbor_types.append((r0, r1, r2, r3))
+    #         words = words[:r0] + words[r2:r3] + words[r1:r2] + words[r0:r1] + words[r3:]
+    #         break # TODO: n_kick = 1 for now
+    #     assert sorted(words) == sorted(words_orig)
+    #     return words, neighbor_types
+
+    def run(self, idx_target: int):
+        words_best, perplexity_best_old = self._get_best(idx_target)
+        self._hillclimbing(
+            words_best,
+            perplexity_best_old,
+            idx_target,
+        )
 
 # %%
 if __name__ == "__main__":
+    args = parse_args()
+    if (args.idx < 0) or (5 < args.idx):
+        raise ValueError(f"Invalid idx: {args.idx}")
+
     path_input_csv = Path("../input/santa-2024/sample_submission.csv")
     path_model = Path("../input/gemma-2/")
     path_save = Path("./save")
@@ -396,6 +365,6 @@ if __name__ == "__main__":
     optimizer = Optimization(calculator, path_input_csv, path_model, path_save)
 
     # %%
-    optimizer.run([5])
+    optimizer.run(args.idx)
 
 # %%
