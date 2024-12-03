@@ -27,11 +27,56 @@ def free_memory():
 
 def make_neighbors(
     words: list[str],
-) -> Generator[tuple[list[str], tuple[int, int, int, int]], None, None]:
+) -> Generator[tuple[list[str], tuple], None, None]:
     words = words.copy()
-    found = set()
+    found = {tuple(words)}
+
+    sorted_segments = []
+    for i, (left_word, right_word) in enumerate(zip(words, words[1:])):
+        if left_word <= right_word:
+            if sorted_segments and sorted_segments[-1][1] == i + 1:
+                sorted_segments[-1][1] = i + 2
+            else:
+                sorted_segments.append([i, i + 2])
+    sorted_segments = [
+        (left, right) for left, right in sorted_segments if right - left >= 4
+    ]
 
     for length in range(1, 5):
+        if length >= 2:
+            # 区間を既にソートされている部分に入れる
+            results = []
+            for source_l in range(len(words) - length + 1):
+                source_r = source_l + length
+                for target_l, target_r in sorted_segments:
+                    if source_r <= target_l:
+                        permuted = (
+                            words[:source_l]
+                            + words[source_r:target_l]
+                            + sorted(
+                                words[source_l:source_r] + words[target_l:target_r]
+                            )
+                            + words[target_r:]
+                        )
+                    elif target_r <= source_l:
+                        permuted = (
+                            words[:target_l]
+                            + sorted(
+                                words[target_l:target_r] + words[source_l:source_r]
+                            )
+                            + words[target_r:source_l]
+                            + words[source_r:]
+                        )
+                    else:
+                        continue
+                    if (t := tuple(permuted)) not in found:
+                        found.add(t)
+                        results.append(
+                            (permuted, (source_l, source_r, target_l, target_r, 3))
+                        )
+            random.shuffle(results)
+            yield from results
+
         r = range(length, len(words) - length + 1)
         for center in random.sample(r, len(r)):
             results = []
