@@ -224,23 +224,28 @@ class Optimization:
         ) -> tuple[float, list[str], list[int]]:
             visited.add(tuple(words))
             depth_to_threshold = {
-                0: 1.01,
-                1: 1.01,
-                2: 1.005,
-                3: 1.005,
+                0: 1.008,
+                1: 1.005,
+                2: 1.004,
+                3: 1.003,
                 4: 1.002,
                 5: 1.002,
-                6: 1.002,
-                7: 1.002,
-                8: 1.002,
-                9: 1.002,
+                6: 1.0015,
+                7: 1.0015,
+                8: 1.001,
+                9: 1.001,
                 10: 1.001,
                 11: 1.001,
                 12: 1.001,
                 13: 1.001,
                 13: 1.001,
                 14: 1.001,
-                15: 1.0,
+                15: 1.001,
+                16: 1.001,
+                17: 1.001,
+                18: 1.001,
+                19: 1.001,
+                20: 1.0,
             }
 
             neighbors = make_neighbors(words)
@@ -349,17 +354,11 @@ class Optimization:
         self, words: list[str], n_kick: int = 2
     ) -> tuple[list[str], list[int]]:
         neighbor_types = []
-        for i in range(n_kick):
-            if i % 4 == 3:
-                r = random.randint(1, len(words) - 1)
-                words = words[r:] + words[:r]
-                neighbor_types.append((r,))
-            else:
-                for _ in range(8):
-                    r0 = random.randint(0, len(words) - 1)
-                    r1 = random.randint(0, len(words) - 1)
-                    words[r0], words[r1] = words[r1], words[r0]
-                    neighbor_types.append((r0, r1))
+        for _ in range(n_kick):
+            r0 = random.randint(0, len(words) - 1)
+            r1 = random.randint(0, len(words) - 1)
+            words[r0], words[r1] = words[r1], words[r0]
+            neighbor_types.append((r0, r1))
         return words, neighbor_types
 
     def run(self, list_idx_target: Optional[list[int]] = None):
@@ -374,7 +373,7 @@ class Optimization:
             words_best, perplexity_best = self._hillclimbing(
                 words_best,
                 perplexity_best_old,
-                iter_total=2000,
+                iter_total=5000,
             )
             print(f"[run] n_idx:{n_idx} perplexity_best:{perplexity_best:.2f}")
             did_kick = False
