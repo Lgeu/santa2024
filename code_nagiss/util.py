@@ -5,6 +5,7 @@ from typing import Union
 
 import numpy as np
 import pandas as pd
+import heapq
 
 path_input_csv = Path("../input/santa-2024/sample_submission.csv")
 path_save = Path("./save")
@@ -12,6 +13,27 @@ path_save = Path("./save")
 path_model = Path("../input/gemma-2/")
 
 df_input = pd.read_csv(path_input_csv)
+
+
+class PriorityQueue:
+    def __init__(self, heap):
+        self.heap = heap
+        heapq.heapify(self.heap)
+
+    def push(self, item):
+        heapq.heappush(self.heap, item)
+
+    def pop(self):
+        return heapq.heappop(self.heap)
+
+    def pushpop(self, item):
+        return heapq.heappushpop(self.heap, item)
+
+    def __call__(self):
+        return self.heap
+
+    def __len__(self):
+        return len(self.heap)
 
 
 def get_path_words_best(n_idx):
