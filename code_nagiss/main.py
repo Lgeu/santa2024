@@ -1,11 +1,10 @@
 import argparse
 import copy
 import gc
-import itertools
 import random
 from pathlib import Path
 from time import time
-from typing import Generator, Optional
+from typing import Optional
 
 import numpy as np
 import pandas as pd
@@ -13,7 +12,6 @@ import torch
 from evaluation import PerplexityCalculator
 from tqdm.auto import tqdm
 from util import (
-    PriorityQueue,
     get_path_words_best,
     get_perplexity_,
     load_score_memo,
@@ -29,131 +27,9 @@ def parse_args():
     return args
 
 
-# %%
-
-
 def free_memory():
     gc.collect()
     torch.cuda.empty_cache()
-
-
-def make_neighbors(
-    words: list[str],
-) -> Generator[tuple[list[str], tuple], None, None]:
-    words = words.copy()
-    found = {tuple(words)}
-
-    sorted_segments = []
-    for i, (left_word, right_word) in enumerate(zip(words, words[1:])):
-        if left_word <= right_word:
-            if sorted_segments and sorted_segments[-1][1] == i + 1:
-                sorted_segments[-1][1] = i + 2
-            else:
-                sorted_segments.append([i, i + 2])
-    sorted_segments = [
-        (left, right) for left, right in sorted_segments if right - left >= 4
-    ]
-
-    for length in range(1, 5):
-        if length >= 2:
-            # 区間を既にソートされている部分に入れる
-            results = []
-            for source_l in range(len(words) - length + 1):
-                source_r = source_l + length
-                for target_l, target_r in sorted_segments:
-                    if source_r <= target_l:
-                        permuted = (
-                            words[:source_l]
-                            + words[source_r:target_l]
-                            + sorted(
-                                words[source_l:source_r] + words[target_l:target_r]
-                            )
-                            + words[target_r:]
-                        )
-                    elif target_r <= source_l:
-                        permuted = (
-                            words[:target_l]
-                            + sorted(
-                                words[target_l:target_r] + words[source_l:source_r]
-                            )
-                            + words[target_r:source_l]
-                            + words[source_r:]
-                        )
-                    else:
-                        continue
-                    if (t := tuple(permuted)) not in found:
-                        found.add(t)
-                        results.append(
-                            (permuted, (source_l, source_r, target_l, target_r, 3))
-                        )
-            random.shuffle(results)
-            yield from results
-
-        r = range(length, len(words) - length + 1)
-        for center in random.sample(r, len(r)):
-            results = []
-            # 右が短い
-            right = center + length
-            for left_length in itertools.count(length):
-                left = center - left_length
-                if left < 0:
-                    break
-                permuted = (
-                    words[:left]
-                    + words[center:right]
-                    + words[left:center]
-                    + words[right:]
-                )
-                if (t := tuple(permuted)) not in found:
-                    found.add(t)
-                    results.append((permuted, (left, center, right, 0)))
-                if length == 2:
-                    permuted = (
-                        words[:left]
-                        + words[center:right][::-1]
-                        + words[left:center]
-                        + words[right:]
-                    )
-                    if (t := tuple(permuted)) not in found:
-                        found.add(t)
-                        results.append((permuted, (left, center, right, 1)))
-                    if left_length == 2:
-                        permuted = (
-                            words[:left]
-                            + words[center:right]
-                            + words[left:center][::-1]
-                            + words[right:]
-                        )
-                        if (t := tuple(permuted)) not in found:
-                            found.add(t)
-                            results.append((permuted, (left, center, right, 2)))
-            # 左が短い
-            left = center - length
-            for right_length in itertools.count(length + 1):
-                right = center + right_length
-                if right > len(words):
-                    break
-                permuted = (
-                    words[:left]
-                    + words[center:right]
-                    + words[left:center]
-                    + words[right:]
-                )
-                if (t := tuple(permuted)) not in found:
-                    found.add(t)
-                    results.append((permuted, (left, center, right, 0)))
-                if length == 2:
-                    permuted = (
-                        words[:left]
-                        + words[center:right]
-                        + words[left:center][::-1]
-                        + words[right:]
-                    )
-                    if (t := tuple(permuted)) not in found:
-                        found.add(t)
-                        results.append((permuted, (left, center, right, 1)))
-            random.shuffle(results)
-            yield from results
 
 
 class Optimization:
@@ -222,134 +98,124 @@ class Optimization:
     def _get_best_all(self, n_idx: int) -> tuple[list[str], float]:
         return self.list_words_best_all[n_idx], self.list_perplexity_best_all[n_idx]
 
-    def _hillclimbing(
+    def _get_random_neighbor(self, words: list[str]) -> tuple[list[str], tuple]:
+        words = words.copy()
+        n = len(words)
+        op = random.choice(["insert_anywhere", "insert_nearby"])
+        if op == "insert_anywhere":
+            # 長さ1-5の部分文字列をランダムで選択し、別の場所に挿入
+            l = random.randint(1, min(5, n))
+            i = random.randint(0, n - l)
+            substring = words[i : i + l]
+            del words[i : i + l]
+            # 新しい挿入位置を選択（どこでも良い）
+            j = random.randint(0, n - l)
+            words[j:j] = substring
+            neighbor_type = ("insert_anywhere", i, j, l)
+        elif op == "insert_nearby":
+            # 長さ1-2の部分文字列を選択し、-10~+10の位置にランダムに挿入
+            l = random.randint(1, min(2, n))
+            i = random.randint(0, n - l)
+            substring = words[i : i + l]
+            del words[i : i + l]
+            # 挿入可能な位置の範囲を計算
+            min_pos = max(0, i - 10)
+            max_pos = min(n - l, i + 10)
+            possible_positions = list(range(min_pos, max_pos + 1))
+            possible_positions.remove(i)  # 元の位置を除外
+            if not possible_positions:
+                # 挿入可能な位置がない場合は元に戻す
+                words[i:i] = substring
+                neighbor_type = ("no_move", i, i, l)
+                return words, neighbor_type
+            j = random.choice(possible_positions)
+            words[j:j] = substring
+            neighbor_type = ("insert_nearby", i, j, l)
+        return words, neighbor_type
+
+    def _simulated_annealing(
         self,
         words_best: list[str],
         perplexity_best: float,
         idx_target: int,
     ) -> tuple[list[str], float]:
-        pbar = tqdm()
-        pqueue = PriorityQueue([(perplexity_best, words_best, 0, [])])
+        # 初期状態の設定
+        words_current = words_best.copy()
+        perplexity_current = perplexity_best
+        words_best_global = words_best.copy()
+        perplexity_best_global = perplexity_best
 
-        visited = set()
-        visited.add(tuple(words_best))
+        # 焼きなまし法のパラメータ
+        T0 = 1000
+        T_min = 1e-7
+        alpha = 0.99999
+        T = T0
+        max_iter = 1000000000
+        iteration = 0
 
-        while True:
-            perplexity_nxt_with_error, words_nxt, depth, neighbor_types = pqueue.pop()
-            print(f" {perplexity_nxt_with_error=}")
+        pbar = tqdm(total=max_iter)
 
-            if perplexity_nxt_with_error < perplexity_best + 2.0:
-                perplexity_nxt = self._calc_perplexity(" ".join(words_nxt))
-            else:
-                perplexity_nxt = perplexity_nxt_with_error
+        while T > T_min and iteration < max_iter:
+            # 近傍解の生成
+            words_neighbor, neighbor_type = self._get_random_neighbor(words_current)
 
-            if perplexity_nxt < perplexity_best:
-                print(
-                    f"[hillclimbing] iter:{pbar.n} Update: {perplexity_best:.2f}"
-                    f" -> {perplexity_nxt:.2f},"
-                    f" neighbor:{','.join(map(str, neighbor_types))}"
-                    f" depth:{depth}"
-                )
-                perplexity_best = perplexity_nxt
-                words_best = words_nxt
-                save_text(
-                    self._calc_perplexity, idx_target, " ".join(words_best), verbose=1
-                )
+            # 近傍解の評価
+            text_neighbor = " ".join(words_neighbor)
+            perplexity_neighbor = self._calc_perplexity(text_neighbor)
 
-            neighbors = make_neighbors(words_nxt)
+            delta_e = perplexity_neighbor - perplexity_current
 
-            list_words_nxt: list[list[str]] = []
-            list_texts_nxt: list[str] = []
-            list_neighbor_type: list = []
+            if delta_e <= 0:
+                # 解を更新
+                words_current = words_neighbor.copy()
+                perplexity_current = perplexity_neighbor
 
-            while True:
-                try:
-                    words_nxt, neighbor_type = next(neighbors)
-                    if tuple(words_nxt) in visited:
-                        continue
-                    list_words_nxt.append(words_nxt)
-                    list_texts_nxt.append(" ".join(words_nxt))
-                    list_neighbor_type.append(neighbor_type)
-                except StopIteration:
-                    break
-
-            if len(list_words_nxt) == 0:
-                continue
-
-            list_perplexity_nxt_with_error = self._calc_perplexity(list_texts_nxt)
-            for words_nxt, perplexity_nxt_with_error, neighbor_type in zip(
-                list_words_nxt,
-                list_perplexity_nxt_with_error,
-                list_neighbor_type,
-            ):
-                visited.add(tuple(words_nxt))
-                pqueue.push(
-                    (
-                        perplexity_nxt_with_error,
-                        words_nxt,
-                        depth + 1,
-                        [neighbor_type] + neighbor_types,
+                # 最良解の更新
+                if perplexity_neighbor < perplexity_best_global:
+                    words_best_global = words_neighbor.copy()
+                    perplexity_best_global = perplexity_neighbor
+                    # 結果の保存
+                    save_text(
+                        self._calc_perplexity, idx_target, text_neighbor, verbose=1
                     )
+                    print(
+                        f"[Simulated Annealing] Iteration:{iteration} Update: {perplexity_best_global:.2f}"
+                    )
+            else:
+                # 確率的に解を更新
+                p_accept = np.exp(-delta_e / T)
+                if random.random() < p_accept:
+                    words_current = words_neighbor.copy()
+                    perplexity_current = perplexity_neighbor
+
+            if iteration % 10000 == 0:
+                print(
+                    f"[Simulated Annealing] Iteration:{iteration} Best Perplexity: {perplexity_best_global:.2f} Perplexity: {perplexity_current:.2f} Temperature: {T:.2f}"
                 )
 
-            if time() > self.last_time_score_memo_saved + 20:
+            # 温度の減少
+            T *= alpha
+            iteration += 1
+            pbar.update(1)
+
+            # 定期的にスコアメモを保存
+            if time() > self.last_time_score_memo_saved + 300:
                 print("start save_score_memo")
                 save_score_memo(self.score_memo, self.score_memo_with_error)
                 self.last_time_score_memo_saved = time()
                 print("end save_score_memo")
 
-            pbar.update(1)
-
-    # def _calc_n_kick_and_reset(self, n_idx) -> tuple[int, bool]:
-    #     """??????????"""
-    #     n_kick: int = self.list_num_kick[n_idx]
-    #     i = 1
-    #     while True:
-    #         if n_kick >= i:
-    #             n_kick -= i
-    #         else:
-    #             break
-    #         i += 1
-    #         if i > 16:
-    #             i = 1
-    #     flag_reset = n_kick == 0 and i >= 2
-    #     n_kick = i - n_kick
-    #     n_kick = n_kick - 1
-    #     return n_kick, flag_reset
-
-    # def ILS_kick(
-    #     self, words: list[str], n_kick: int = 2
-    # ) -> tuple[list[str], list[int]]:
-    #     neighbor_types = []
-    #     for _ in range(n_kick):
-    #         r0 = random.randint(0, len(words) - 1)
-    #         r1 = random.randint(0, len(words) - 1)
-    #         words[r0], words[r1] = words[r1], words[r0]
-    #         neighbor_types.append((r0, r1))
-    #     return words, neighbor_types
-
-    # def ILS_kick(self, words: list[str], n_kick: int = 2) -> tuple[list[str], list[int]]:
-    #     # double bridge kick
-    #     words_orig = words.copy()
-    #     neighbor_types = []
-    #     for _ in range(n_kick):
-    #         r0, r1, r2, r3 = random.sample(range(1, len(words)), 4)
-    #         r0, r1, r2, r3 = sorted([r0, r1, r2, r3])
-    #         neighbor_types.append((r0, r1, r2, r3))
-    #         words = words[:r0] + words[r2:r3] + words[r1:r2] + words[r0:r1] + words[r3:]
-    #         break # TODO: n_kick = 1 for now
-    #     assert sorted(words) == sorted(words_orig)
-    #     return words, neighbor_types
+        pbar.close()
 
     def run(self, idx_target: int):
-        words_best, perplexity_best_old = self._get_best(idx_target)
-        self._hillclimbing(
+        words_best, perplexity_best = self._get_best(idx_target)
+        self._simulated_annealing(
             words_best,
-            perplexity_best_old,
+            perplexity_best,
             idx_target,
         )
 
-# %%
+
 if __name__ == "__main__":
     args = parse_args()
     if (args.idx < 0) or (5 < args.idx):
@@ -359,12 +225,15 @@ if __name__ == "__main__":
     path_model = Path("../input/gemma-2/")
     path_save = Path("./save")
     calculator = PerplexityCalculator(model_path=str(path_model))
-    # %%
-    calculator.get_perplexity("test") # warm up, needed for kibuna's wsl2
-    # %%
-    optimizer = Optimization(calculator, path_input_csv, path_model, path_save)
 
-    # %%
+    calculator.get_perplexity("test")  # ウォームアップ
+
+    optimizer = Optimization(
+        calculator,
+        path_input_csv,
+        path_model,
+        path_save,
+        flag_use_best=True,
+    )
+
     optimizer.run(args.idx)
-
-# %%
