@@ -2,6 +2,7 @@ import copy
 import gc
 import itertools
 import random
+from collections import Counter
 from pathlib import Path
 from time import time
 from typing import Generator, Optional
@@ -9,7 +10,10 @@ from typing import Generator, Optional
 import numpy as np
 import pandas as pd
 import torch
+import torch.nn.functional as F
 from evaluation import PerplexityCalculator
+from pretrain import SantaNet
+from scipy.stats import spearmanr
 from tqdm.auto import tqdm
 from util import (
     get_path_words_best,
@@ -18,6 +22,89 @@ from util import (
     save_score_memo,
     save_text,
 )
+
+
+class ScoreEstimator:
+    def __init__(
+        self,
+        problem_id: int,
+        epoch: int,
+        device: torch.device,
+    ):
+        self.problem_id = problem_id
+        self.length = {3: 30, 4: 50, 5: 100}[problem_id]
+        online_model_dir = Path("save/online")
+        online_model_dir.mkdir(parents=True, exist_ok=True)
+        self.online_model_path = online_model_dir / f"model_{problem_id}.pt"
+        self.pretrained_model_path = Path(
+            f"save/pretrain/model_{problem_id}_epoch_{epoch}.pt"
+        )
+        if self.online_model_path.exists():
+            checkpoint = torch.load(self.online_model_path, map_location=device)
+        elif self.pretrained_model_path.exists():
+            checkpoint = torch.load(self.pretrained_model_path, map_location=device)
+        else:
+            raise FileNotFoundError
+
+        self.word_to_id = checkpoint["word_to_id"]
+
+        self.device = device
+        self.model = SantaNet(
+            vocab_size=len(self.word_to_id), channels=128, num_blocks=12
+        ).to(device)
+        self.model.load_state_dict(checkpoint["model"])
+        self.model.eval()
+        self.optimizer = torch.optim.AdamW(self.model.parameters(), lr=0.0001)
+
+        # 統計用にデータを貯めておく
+        self.buffer_texts = []
+        self.buffer_scores = []
+        self.buffer_predictions = []
+        self.update_count = 0
+
+    def estimate_scores(self, texts: list[str]) -> np.ndarray:
+        X_list = []
+        for text in texts:
+            words = text.split()
+            assert len(words) == self.length
+            X_list.append([self.word_to_id[w] for w in words])
+        X = torch.tensor(X_list, dtype=torch.long, device=self.device)
+        with torch.no_grad():
+            preds: torch.Tensor = self.model(X).squeeze(-1)  # (B,)
+        return preds.detach().cpu().numpy()
+
+    def update_parameters(self, texts: list[str], scores: list[float]):
+        X_list = []
+        for text in texts:
+            words = text.split()
+            assert len(words) == self.length
+            X_list.append([self.word_to_id[w] for w in words])
+        X = torch.tensor(X_list, dtype=torch.long, device=self.device)
+        self.model.train()
+        pred: torch.Tensor = self.model(X).squeeze(-1)  # (B,)
+        target = torch.tensor(scores, dtype=torch.float, device=self.device).log()
+        loss = F.l1_loss(pred, target)
+        loss.backward()
+        self.optimizer.step()
+        self.optimizer.zero_grad(set_to_none=True)
+        self.model.eval()
+
+        self.buffer_texts.extend(texts)
+        self.buffer_scores.extend(scores)
+        self.buffer_predictions.extend(pred.detach().cpu().tolist())
+        self.update_count += 1
+        if self.update_count % 256 == 0:
+            corr, _ = spearmanr(self.buffer_scores, self.buffer_predictions)
+            print(f"[ScoreEstimator] Spearman: {corr:.4f}")
+            self.buffer_texts.clear()
+            self.buffer_scores.clear()
+            self.buffer_predictions.clear()
+
+    def save_model(self):
+        torch.save(
+            {"word_to_id": self.word_to_id, "model": self.model.state_dict()},
+            self.online_model_path,
+        )
 
 
 def free_memory():
@@ -167,6 +254,15 @@ class Optimization:
         self.score_memo, self.score_memo_with_error = load_score_memo()
         self.last_time_score_memo_saved = time()
 
+        # ScoreEstimator
+        self.score_estimators = {
+            5: ScoreEstimator(
+                problem_id=5,
+                epoch=11,
+                device=torch.device("cuda" if torch.cuda.is_available() else "cpu"),
+            )
+        }
+
         # 現在までの最良の解
         self.list_words_best: list[list[str]] = []
         self.list_perplexity_best: list[float] = []
@@ -213,9 +309,34 @@ class Optimization:
         self,
         words_best: list[str],
         perplexity_best: float,
+        score_estimator: ScoreEstimator,
         iter_total: int = 2000,
     ) -> tuple[list[str], float]:
         pbar = tqdm(total=iter_total, mininterval=30)
+
+        class Stats:
+            def __init__(self, max_value: int):
+                self.max_value = max_value
+                self.accepted = Counter()
+                self.rejected = Counter()
+
+            def summary(self) -> str:
+                n_bins = 8
+                accepted = [0] * n_bins
+                for value, count in self.accepted.items():
+                    assert 0 <= value < self.max_value
+                    accepted[value * n_bins // self.max_value] += count
+                rejected = [0] * n_bins
+                for value, count in self.rejected.items():
+                    assert 0 <= value < self.max_value
+                    rejected[value * n_bins // self.max_value] += count
+                return (
+                    f"accepted:{accepted} rejected:{rejected}"
+                    f" total:{sum(accepted) + sum(rejected)}"
+                )
+
+        batch_size = 128
+        stats = Stats(max_value=batch_size)
 
         visited = set()
 
@@ -238,7 +359,6 @@ class Optimization:
                 11: 1.001,
                 12: 1.001,
                 13: 1.001,
-                13: 1.001,
                 14: 1.001,
                 15: 1.001,
                 16: 1.001,
@@ -255,7 +375,8 @@ class Optimization:
                 list_texts_nxt: list[str] = []
                 list_neighbor_type: list = []
 
-                while len(list_words_nxt) < 128:
+                num_candidates = 2048
+                while len(list_words_nxt) < num_candidates:
                     try:
                         words_nxt, neighbor_type = next(neighbors)
                         if tuple(words_nxt) in visited:
@@ -265,34 +386,57 @@ class Optimization:
                         list_neighbor_type.append(neighbor_type)
                     except StopIteration:
                         break
-                if len(list_words_nxt) == 0:
+                if len(list_words_nxt) < num_candidates:
                     return None, None, None, max_depth
 
+                # 枝刈り
+                # 推定スコア上位 112 個とランダム 16 個を選ぶ ε-greedy
+                estimated_scores = score_estimator.estimate_scores(list_texts_nxt)
+                indices_sorted = np.argsort(estimated_scores).tolist()
+                indices_keep = indices_sorted[:112] + random.sample(
+                    indices_sorted[112:], 16
+                )
+                assert len(indices_keep) == batch_size
+                list_words_nxt = [list_words_nxt[i] for i in indices_keep]
+                list_texts_nxt = [list_texts_nxt[i] for i in indices_keep]
+                list_neighbor_type = [list_neighbor_type[i] for i in indices_keep]
+
                 list_perplexity_nxt_with_error = self._calc_perplexity(list_texts_nxt)
-                idx_min = int(np.argmin(list_perplexity_nxt_with_error))
-                words_nxt = list_words_nxt[idx_min]
-                perplexity_nxt_with_error = list_perplexity_nxt_with_error[idx_min]
-                neighbor_type = list_neighbor_type[idx_min]
+
+                score_estimator.update_parameters(
+                    list_texts_nxt, list_perplexity_nxt_with_error
+                )
+
+                estimated_rank = int(np.argmin(list_perplexity_nxt_with_error))
+                words_nxt = list_words_nxt[estimated_rank]
+                perplexity_nxt_with_error = list_perplexity_nxt_with_error[
+                    estimated_rank
+                ]
+                neighbor_type = list_neighbor_type[estimated_rank]
                 if perplexity_nxt_with_error < perplexity_best + 2.0:
                     perplexity_nxt = self._calc_perplexity(" ".join(words_nxt))
                 else:
                     perplexity_nxt = perplexity_nxt_with_error
 
                 if perplexity_nxt < perplexity_best:
+                    stats.accepted[estimated_rank] += 1
                     return perplexity_nxt, words_nxt, [neighbor_type], max_depth
                 elif perplexity_nxt < perplexity_best * depth_to_threshold[depth]:
-                    for words_nxt, perplexity_nxt, neighbor_type in zip(
-                        list_words_nxt,
-                        list_perplexity_nxt_with_error,
-                        list_neighbor_type,
-                    ):
+                    search_order = list(range(batch_size))
+                    random.shuffle(search_order)
+                    for estimated_rank in search_order:
+                        words_nxt = list_words_nxt[estimated_rank]
+                        perplexity_nxt = list_perplexity_nxt_with_error[estimated_rank]
+                        neighbor_type = list_neighbor_type[estimated_rank]
                         if (
                             perplexity_nxt
                             >= perplexity_best * depth_to_threshold[depth]
                         ):
+                            stats.rejected[estimated_rank] += 1
                             continue
                         if tuple(words_nxt) in visited:
                             continue
+                        stats.accepted[estimated_rank] += 1
                         perplexity_nxt, words_nxt, neighbor_types, max_depth_ = search(
                             words_nxt, depth + 1
                         )
@@ -314,6 +458,7 @@ class Optimization:
                         f" nxt:{perplexity_nxt:.2f}"
                         f" neighbor:{neighbor_type}"
                         f" depth:{depth}"
+                        f" {stats.summary()}"
                     )
                 pbar.update(1)
 
@@ -325,11 +470,12 @@ class Optimization:
                 f" -> {perplexity_nxt:.2f},"
                 f" neighbor:{','.join(map(str, neighbor_types))}"
                 f" max_depth:{max_depth}"
+                f" {stats.summary()}"
             )
             perplexity_best = perplexity_nxt
             words_best = words_nxt
         else:
-            print(f"[hillclimbing] No update, max_depth:{max_depth}")
+            print(f"[hillclimbing] No update, max_depth:{max_depth} {stats.summary()}")
 
         return words_best, perplexity_best
 
@@ -354,7 +500,7 @@ class Optimization:
         self, words: list[str], n_kick: int = 2
     ) -> tuple[list[str], list[int]]:
         neighbor_types = []
-        for _ in range(n_kick):
+        for _ in range(n_kick * 4 + 4):
             r0 = random.randint(0, len(words) - 1)
             r1 = random.randint(0, len(words) - 1)
             words[r0], words[r1] = words[r1], words[r0]
@@ -362,7 +508,6 @@ class Optimization:
         return words, neighbor_types
 
     def run(self, list_idx_target: Optional[list[int]] = None):
-        n_idx = 0
         if list_idx_target is None:
             list_idx_target = list(range(self.n_idx_total))
         for n_idx in itertools.cycle(list_idx_target):
@@ -373,7 +518,8 @@ class Optimization:
             words_best, perplexity_best = self._hillclimbing(
                 words_best,
                 perplexity_best_old,
-                iter_total=5000,
+                score_estimator=self.score_estimators[n_idx],
+                iter_total=500,
             )
             print(f"[run] n_idx:{n_idx} perplexity_best:{perplexity_best:.2f}")
             did_kick = False
@@ -392,9 +538,10 @@ class Optimization:
             self._update_best_all(n_idx, words_best, perplexity_best)
             if not did_kick and perplexity_best < self._get_best_all(n_idx)[1] * 1.1:
                 save_text(self._calc_perplexity, n_idx, " ".join(words_best), verbose=1)
-            if time() > self.last_time_score_memo_saved + 600:
+            if time() > self.last_time_score_memo_saved + 1800:
                 save_score_memo(self.score_memo, self.score_memo_with_error)
                 self.last_time_score_memo_saved = time()
+                self.score_estimators[n_idx].save_model()
 
 
 if __name__ == "__main__":
@@ -402,4 +549,4 @@ if __name__ == "__main__":
     path_model = Path("../input/gemma-2/")
     path_save = Path("./save")
     optimizer = Optimization(path_input_csv, path_model, path_save)
-    optimizer.run()
+    optimizer.run([5])
