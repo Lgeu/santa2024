@@ -44,7 +44,7 @@ def make_neighbors(
         (left, right) for left, right in sorted_segments if right - left >= 4
     ]
 
-    for length in range(1, 5):
+    for length in range(1, 7):
         if length >= 2:
             # 区間を既にソートされている部分に入れる
             results = []
@@ -153,6 +153,7 @@ class Optimization:
         path_input_csv: Path,
         path_model: Path,
         path_save: Path,
+        path_pruning_score_memo: Path,
         flag_use_best=True,  # best を使うかどうか
         flag_shuffle=True,  # best を使わない時にシャッフルするかどうか
     ):
@@ -160,6 +161,7 @@ class Optimization:
         self.path_model = Path(path_model)
         self.path_save = Path(path_save)
         self.path_save.mkdir(parents=True, exist_ok=True)
+        self.path_pruning_score_memo = Path(path_pruning_score_memo)
         self.flag_use_best = flag_use_best
         self.flag_shuffle = flag_shuffle
 
@@ -168,6 +170,7 @@ class Optimization:
         self.n_idx_total = len(self.df)
         self.calculator = calculator
         self.score_memo, self.score_memo_with_error = load_score_memo()
+        self.score_dict = pd.read_pickle(self.path_pruning_score_memo)
         self.last_time_score_memo_saved = time()
 
         # 現在までの最良の解
@@ -212,6 +215,25 @@ class Optimization:
     def _get_best_all(self, n_idx: int) -> tuple[list[str], float]:
         return self.list_words_best_all[n_idx], self.list_perplexity_best_all[n_idx]
 
+    def _estimate_score(self, words: list[str]) -> float:
+        # TODO
+        score = 0
+        for i in range(len(words)):
+            if i == 0:
+                key = (words[i],)
+            elif i == 1:
+                key = (words[i-1], words[i])
+            else:
+            # elif i == 2:
+                key = (words[i-2], words[i-1], words[i])
+            # else:
+            #     key = (words[i-3], words[i-2], words[i-1], words[i])
+                
+            score_add = self.score_dict[key]
+            score += score_add
+        score += self.score_dict[(words[-2], words[-1], "<eos>")]
+        return score
+
     def _hillclimbing(
         self,
         words_best: list[str],
@@ -225,7 +247,7 @@ class Optimization:
         def search(words_best: list[str], perplexity_best: float):
             visited = set()
             pqueue = PriorityQueue([(perplexity_best, words_best, 0, [])])
-            threshold = 1.015
+            threshold = 1.05
             max_depth = 0
 
             for _ in itertools.count(0):
@@ -257,8 +279,10 @@ class Optimization:
                 list_words_nxt: list[list[str]] = []
                 list_texts_nxt: list[str] = []
                 list_neighbor_type: list = []
+                list_est_score: list[float] = []
 
-                while len(list_words_nxt) < 128 * 8:
+                # while len(list_words_nxt) < 128 * 64:
+                while True:
                     try:
                         words_nxt, neighbor_type = next(neighbors)
                         if tuple(words_nxt) in visited:
@@ -266,11 +290,19 @@ class Optimization:
                         list_words_nxt.append(words_nxt)
                         list_texts_nxt.append(" ".join(words_nxt))
                         list_neighbor_type.append(neighbor_type)
+                        list_est_score.append(self._estimate_score(words_nxt))
                     except StopIteration:
                         break
 
                 if len(list_words_nxt) == 0:
                     continue
+
+                # Sort all lists by est_score in ascending order
+                sorted_indices = sorted(range(len(list_est_score)), key=lambda i: list_est_score[i])
+                list_words_nxt = [list_words_nxt[i] for i in sorted_indices][:128*8]
+                list_texts_nxt = [list_texts_nxt[i] for i in sorted_indices][:128*8]
+                list_neighbor_type = [list_neighbor_type[i] for i in sorted_indices][:128*8]
+                list_est_score = [list_est_score[i] for i in sorted_indices][:128*8]
 
                 list_perplexity_nxt_with_error = self._calc_perplexity(list_texts_nxt)
                 for words_nxt, perplexity_nxt_with_error, neighbor_type in zip(
@@ -394,11 +426,12 @@ if __name__ == "__main__":
     path_input_csv = Path("../input/santa-2024/sample_submission.csv")
     path_model = Path("../input/gemma-2/")
     path_save = Path("./save")
+    path_pruning_score_memo = Path("./score_dict_0005_3.pkl")
     calculator = PerplexityCalculator(model_path=str(path_model))
     # %%
     calculator.get_perplexity("test") # warm up, needed for kibuna's wsl2
     # %%
-    optimizer = Optimization(calculator, path_input_csv, path_model, path_save)
+    optimizer = Optimization(calculator, path_input_csv, path_model, path_save, path_pruning_score_memo)
 
     # %%
     optimizer.run([5])
