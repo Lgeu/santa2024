@@ -3,14 +3,20 @@ import gc
 import itertools
 import random
 from collections import Counter
-from pathlib import Path
 from time import time
 from typing import Generator, Optional
 
 import numpy as np
-import pandas as pd
 import torch
 import torch.nn.functional as F
+from constants import (
+    DF_INPUT,
+    LIST_NUM_WORDS,
+    LIST_WORD_TO_ID,
+    NUM_PROBLEMS,
+    PATH_GEMMA,
+    PATH_SAVE,
+)
 from evaluation import PerplexityCalculator
 from pretrain import SantaNet
 from scipy.stats import spearmanr
@@ -32,12 +38,12 @@ class ScoreEstimator:
         device: torch.device,
     ):
         self.problem_id = problem_id
-        self.length = {3: 30, 4: 50, 5: 100}[problem_id]
-        online_model_dir = Path("save/online")
+        self.length = LIST_NUM_WORDS[problem_id]
+        online_model_dir = PATH_SAVE / "online"
         online_model_dir.mkdir(parents=True, exist_ok=True)
         self.online_model_path = online_model_dir / f"model_{problem_id}.pt"
-        self.pretrained_model_path = Path(
-            f"save/pretrain/model_{problem_id}_epoch_{epoch}.pt"
+        self.pretrained_model_path = (
+            PATH_SAVE / f"pretrain/model_{problem_id}_epoch_{epoch}.pt"
         )
         if self.online_model_path.exists():
             checkpoint = torch.load(self.online_model_path, map_location=device)
@@ -46,7 +52,7 @@ class ScoreEstimator:
         else:
             raise FileNotFoundError
 
-        self.word_to_id = checkpoint["word_to_id"]
+        self.word_to_id = LIST_WORD_TO_ID[problem_id]
 
         self.device = device
         self.model = SantaNet(
@@ -234,23 +240,14 @@ def make_neighbors(
 class Optimization:
     def __init__(
         self,
-        path_input_csv: Path,
-        path_model: Path,
-        path_save: Path,
         flag_use_best=True,  # best を使うかどうか
         flag_shuffle=True,  # best を使わない時にシャッフルするかどうか
     ):
-        self.path_input_csv = Path(path_input_csv)
-        self.path_model = Path(path_model)
-        self.path_save = Path(path_save)
-        self.path_save.mkdir(parents=True, exist_ok=True)
         self.flag_use_best = flag_use_best
         self.flag_shuffle = flag_shuffle
 
         # データ、スコア計算クラス、スコアメモを読み込む
-        self.df = pd.read_csv(self.path_input_csv)
-        self.n_idx_total = len(self.df)
-        self.calculator = PerplexityCalculator(model_path=str(self.path_model))
+        self.calculator = PerplexityCalculator(model_path=str(PATH_GEMMA))
         self.score_memo, self.score_memo_with_error = load_score_memo()
         self.last_time_score_memo_saved = time()
 
@@ -266,12 +263,12 @@ class Optimization:
         # 現在までの最良の解
         self.list_words_best: list[list[str]] = []
         self.list_perplexity_best: list[float] = []
-        for idx in range(self.n_idx_total):
+        for idx in range(NUM_PROBLEMS):
             if self.flag_use_best:
                 _, list_words = get_path_words_best(idx)
                 assert list_words is not None
             else:
-                text: str = self.df.iloc[idx, 1]
+                text: str = DF_INPUT.iloc[idx, 1]
                 list_words = text.split()
                 if self.flag_shuffle:
                     random.shuffle(list_words)
@@ -287,7 +284,7 @@ class Optimization:
         self.list_perplexity_best_all = copy.deepcopy(self.list_perplexity_best)
 
         # 初期化
-        self.list_num_kick = [1] * self.n_idx_total
+        self.list_num_kick = [1] * NUM_PROBLEMS
 
     def _calc_perplexity(self, text: str) -> float:
         return get_perplexity_(
@@ -509,7 +506,7 @@ class Optimization:
 
     def run(self, list_idx_target: Optional[list[int]] = None):
         if list_idx_target is None:
-            list_idx_target = list(range(self.n_idx_total))
+            list_idx_target = list(range(NUM_PROBLEMS))
         for n_idx in itertools.cycle(list_idx_target):
             free_memory()
             words_best, perplexity_best_old = self._get_best(n_idx)
@@ -545,8 +542,5 @@ class Optimization:
 
 
 if __name__ == "__main__":
-    path_input_csv = Path("../input/santa-2024/sample_submission.csv")
-    path_model = Path("../input/gemma-2/")
-    path_save = Path("./save")
-    optimizer = Optimization(path_input_csv, path_model, path_save)
+    optimizer = Optimization()
     optimizer.run([5])

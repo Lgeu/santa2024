@@ -1,22 +1,14 @@
 import hashlib
 import pickle
-from pathlib import Path
 from typing import Union
 
 import numpy as np
-import pandas as pd
-
-path_input_csv = Path("../input/santa-2024/sample_submission.csv")
-path_save = Path("./save")
-# path_save.mkdir(parents=True, exist_ok=True)
-path_model = Path("../input/gemma-2/")
-
-df_input = pd.read_csv(path_input_csv)
+from constants import DF_INPUT, PATH_SAVE
 
 
 def get_path_words_best(n_idx):
-    path_save_idx = path_save / f"{n_idx:04d}"
-    words_original = df_input.loc[n_idx, "text"].split(" ")
+    path_save_idx = PATH_SAVE / f"{n_idx:04d}"
+    words_original = DF_INPUT.loc[n_idx, "text"].split(" ")
 
     path_txt = path_save_idx.glob("*.txt")
     list_path_txt = list(path_txt)
@@ -34,10 +26,10 @@ def get_path_words_best(n_idx):
 
 
 def save_text(get_perplexity, n_idx, text, verbose=0):
-    path_save_idx = path_save / f"{n_idx:04d}"
+    path_save_idx = PATH_SAVE / f"{n_idx:04d}"
     if not path_save_idx.exists():
         path_save_idx.mkdir()
-    text_original = df_input.loc[n_idx, "text"]
+    text_original = DF_INPUT.loc[n_idx, "text"]
     words_original = text_original.split(" ")
     words = text.split(" ")
     if sorted(words) != sorted(words_original):
@@ -60,7 +52,7 @@ def save_text(get_perplexity, n_idx, text, verbose=0):
 
 def load_score_memo() -> tuple[dict[str, float], dict[str, float]]:
     def load(name: str) -> dict[str, float]:
-        path_score_memo = path_save / name
+        path_score_memo = PATH_SAVE / name
         if path_score_memo.exists():
             with path_score_memo.open("rb") as f:
                 score_memo = pickle.load(f)
@@ -76,7 +68,7 @@ def save_score_memo(
     score_memo_with_error: dict[str, float],
 ):
     def save(name: str, score_memo: dict[str, float]):
-        path_score_memo = path_save / name
+        path_score_memo = PATH_SAVE / name
         with path_score_memo.open("wb") as f:
             pickle.dump(score_memo, f)
 

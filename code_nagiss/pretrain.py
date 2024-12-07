@@ -5,6 +5,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
+from constants import LIST_NUM_WORDS, LIST_WORD_TO_ID, PATH_SAVE
 from scipy.stats import spearmanr
 from torch.utils.data import DataLoader, Dataset, random_split
 from tqdm.auto import tqdm
@@ -92,13 +93,10 @@ class ScoreDataset(Dataset):
 def prepare_dataset(
     training_data: dict[str, float], problem_id: int
 ) -> tuple[dict[str, int], Dataset]:
-    # fmt: off
-    if problem_id == 5:
-        word_to_id = {'advent': 0, 'and': 1, 'angel': 2, 'as': 3, 'bake': 4, 'beard': 5, 'believe': 6, 'bow': 7, 'candle': 8, 'candy': 9, 'card': 10, 'carol': 11, 'cheer': 12, 'chimney': 13, 'chocolate': 14, 'cookie': 15, 'decorations': 16, 'doll': 17, 'dream': 18, 'drive': 19, 'eat': 20, 'eggnog': 21, 'elf': 22, 'family': 23, 'fireplace': 24, 'from': 25, 'fruitcake': 26, 'game': 27, 'gifts': 28, 'gingerbread': 29, 'give': 30, 'greeting': 31, 'grinch': 32, 'have': 33, 'hohoho': 34, 'holiday': 35, 'holly': 36, 'hope': 37, 'in': 38, 'is': 39, 'it': 40, 'jingle': 41, 'joy': 42, 'jump': 43, 'kaggle': 44, 'laugh': 45, 'magi': 46, 'merry': 47, 'milk': 48, 'mistletoe': 49, 'naughty': 50, 'nice': 51, 'night': 52, 'not': 53, 'nutcracker': 54, 'of': 55, 'ornament': 56, 'paper': 57, 'peace': 58, 'peppermint': 59, 'poinsettia': 60, 'polar': 61, 'puzzle': 62, 'reindeer': 63, 'relax': 64, 'scrooge': 65, 'season': 66, 'sing': 67, 'sleep': 68, 'sleigh': 69, 'snowglobe': 70, 'star': 71, 'stocking': 72, 'that': 73, 'the': 74, 'to': 75, 'toy': 76, 'unwrap': 77, 'visit': 78, 'walk': 79, 'we': 80, 'wish': 81, 'with': 82, 'wonder': 83, 'workshop': 84, 'wrapping': 85, 'wreath': 86, 'you': 87, 'yuletide': 88}
-    else:
-        raise ValueError
-    # fmt: on
-    length = {3: 30, 4: 50, 5: 100}[problem_id]
+    word_to_id = LIST_WORD_TO_ID[problem_id]
+    length = LIST_NUM_WORDS[problem_id]
+    if problem_id in [1, 2]:
+        raise ValueError("problem_id 1 and 2 are not supported")
     X = torch.empty((50000000, length), dtype=torch.int8)
     y = torch.empty(50000000, dtype=torch.float)
     idx = 0
@@ -120,8 +118,8 @@ def prepare_dataset(
 
 def train_model(problem_id: int = 5) -> None:
     _, training_data = load_score_memo()
-    model_save_dir = Path("save/pretrain")
-    model_save_dir.mkdir(parents=True, exist_ok=True)
+    path_pretrain = PATH_SAVE / Path("pretrain")
+    path_pretrain.mkdir(parents=True, exist_ok=True)
     num_epochs = 20
     batch_size = 4096
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -183,7 +181,7 @@ def train_model(problem_id: int = 5) -> None:
 
         torch.save(
             {"model": model.state_dict(), "word_to_id": word_to_id},
-            model_save_dir / f"model_{problem_id}_epoch_{epoch+1}.pt",
+            path_pretrain / f"model_{problem_id}_epoch_{epoch+1}.pt",
         )
 
 
