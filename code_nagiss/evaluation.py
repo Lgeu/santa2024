@@ -147,6 +147,7 @@ class PerplexityCalculator:
             quantization_config = transformers.BitsAndBytesConfig(load_in_8bit=True)
             self.model = transformers.AutoModelForCausalLM.from_pretrained(
                 model_path,
+                attn_implementation="sdpa",
                 quantization_config=quantization_config,
                 device_map=device_map,
             )
@@ -331,6 +332,92 @@ class PerplexityCalculator:
         ppl = [exp(i) for i in loss_list]
 
         return ppl[0] if single_input else ppl
+
+    def get_log_ppl_per_word(self, input_texts: Union[str, List[str]], batch_size=8) -> Union[float, List[float]]:
+        single_input = isinstance(input_texts, str)
+        input_texts = [input_texts] if single_input else input_texts
+
+        loss_list = []
+        length_list = []
+        tokenized_word_list = []
+
+        batches = len(input_texts) // batch_size + (len(input_texts) % batch_size != 0)
+        for j in range(batches):
+            a = j * batch_size
+            b = (j + 1) * batch_size
+            input_batch = input_texts[a:b]
+
+            with torch.no_grad():
+                # Explicitly add sequence boundary tokens to the text
+                text_with_special = [
+                    f"{self.tokenizer.bos_token}{text}{self.tokenizer.eos_token}"
+                    for text in input_batch
+                ]
+
+                # Tokenize
+                model_inputs = self.tokenizer(
+                    text_with_special,
+                    return_tensors="pt",
+                    add_special_tokens=False,
+                    padding=True,
+                )
+
+                if "token_type_ids" in model_inputs:
+                    model_inputs.pop("token_type_ids")
+
+                model_inputs = {k: v.to(DEVICE) for k, v in model_inputs.items()}
+
+                # Get model output
+                output = self.model(**model_inputs, use_cache=False)
+                logits = output["logits"]
+
+                label = model_inputs["input_ids"]
+                label[label == self.tokenizer.pad_token_id] = PAD_TOKEN_LABEL_ID
+
+                # Shift logits and labels for calculating loss
+                shift_logits = logits[..., :-1, :].contiguous()  # Drop last prediction
+                shift_labels = label[..., 1:].contiguous()  # Drop first input
+
+                # Calculate token-wise loss
+                loss = self.loss_fct(
+                    shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1)
+                )
+
+                loss = loss.view(len(logits), -1)
+                valid_length = (shift_labels != PAD_TOKEN_LABEL_ID).sum(dim=-1)
+                # loss = torch.sum(loss, -1) / valid_length
+
+                tokenized_word_list += [self.tokenizer.convert_ids_to_tokens([id for id in label[i][1:] if id != PAD_TOKEN_LABEL_ID]) for i in range(len(text_with_special))]
+                length_list += valid_length.cpu().tolist()
+                if single_input:
+                    loss_list += [loss.cpu().tolist()]
+                else:
+                    loss_list += loss.cpu().tolist()
+
+        log_ppl_per_word_list = []
+        for i in range(len(loss_list)):
+            # words = ["<bos>"] + input_texts[i].split(" ") + ["<eos>"]
+            words = input_texts[i].split(" ") + ["<eos>"]
+            tokenized_word = tokenized_word_list[i]
+            loss = loss_list[i]
+
+            log_ppl_per_word = []
+            word_idx = 0
+            curr_score = 0
+            curr_word = ""
+
+            for j in range(len(tokenized_word)):
+                word = tokenized_word[j].replace("▁", "")
+                curr_word += word
+                curr_score += loss[j]
+                if curr_word == words[word_idx]:
+                    log_ppl_per_word.append(curr_score)
+                    curr_score = 0
+                    curr_word = ""
+                    word_idx += 1
+            log_ppl_per_word_list.append(log_ppl_per_word)
+
+        return log_ppl_per_word_list[0] if single_input else log_ppl_per_word_list
 
     def clear_gpu_memory(self) -> None:
         """Clears GPU memory by deleting references and emptying caches."""
