@@ -4,7 +4,7 @@ import itertools
 import random
 from collections import Counter
 from time import time
-from typing import Generator, Optional
+from typing import Generator, Optional, Union
 
 import numpy as np
 import torch
@@ -34,7 +34,7 @@ class ScoreEstimator:
     def __init__(
         self,
         problem_id: int,
-        epoch: int,
+        epoch: int,  # 事前学習のモデルをそのまま読み込む場合のみ使われる
         device: torch.device,
     ):
         self.problem_id = problem_id
@@ -46,8 +46,12 @@ class ScoreEstimator:
             PATH_SAVE / f"pretrain/model_{problem_id}_epoch_{epoch}.pt"
         )
         if self.online_model_path.exists():
+            print(f"[ScoreEstimator] Load online model: {self.online_model_path}")
             checkpoint = torch.load(self.online_model_path, map_location=device)
         elif self.pretrained_model_path.exists():
+            print(
+                f"[ScoreEstimator] Load pretrained model: {self.pretrained_model_path}"
+            )
             checkpoint = torch.load(self.pretrained_model_path, map_location=device)
         else:
             raise FileNotFoundError
@@ -253,11 +257,16 @@ class Optimization:
 
         # ScoreEstimator
         self.score_estimators = {
+            0: None,
+            1: None,
+            2: None,
+            3: None,
+            4: None,
             5: ScoreEstimator(
                 problem_id=5,
                 epoch=11,
                 device=torch.device("cuda" if torch.cuda.is_available() else "cpu"),
-            )
+            ),
         }
 
         # 現在までの最良の解
@@ -274,7 +283,7 @@ class Optimization:
                     random.shuffle(list_words)
             text = " ".join(list_words)
             self.list_words_best.append(list_words.copy())
-            score_new = self._calc_perplexity(text)
+            score_new = self._calc_perplexity(idx, text)
             self.list_perplexity_best.append(score_new)
 
             print(f"idx:{idx} score:{score_new:.4f}")
@@ -286,9 +295,11 @@ class Optimization:
         # 初期化
         self.list_num_kick = [1] * NUM_PROBLEMS
 
-    def _calc_perplexity(self, text: str) -> float:
+    def _calc_perplexity(
+        self, n_idx: int, text: Union[str, list[str]]
+    ) -> Union[float, list[float]]:
         return get_perplexity_(
-            self.calculator, self.score_memo, self.score_memo_with_error, text
+            self.calculator, n_idx, self.score_memo, self.score_memo_with_error, text
         )
 
     def _get_best(self, n_idx: int) -> tuple[list[str], float]:
@@ -304,6 +315,7 @@ class Optimization:
 
     def _hillclimbing(
         self,
+        n_idx: int,
         words_best: list[str],
         perplexity_best: float,
         score_estimator: ScoreEstimator,
@@ -398,7 +410,9 @@ class Optimization:
                 list_texts_nxt = [list_texts_nxt[i] for i in indices_keep]
                 list_neighbor_type = [list_neighbor_type[i] for i in indices_keep]
 
-                list_perplexity_nxt_with_error = self._calc_perplexity(list_texts_nxt)
+                list_perplexity_nxt_with_error = self._calc_perplexity(
+                    n_idx, list_texts_nxt
+                )
 
                 score_estimator.update_parameters(
                     list_texts_nxt, list_perplexity_nxt_with_error
@@ -411,7 +425,7 @@ class Optimization:
                 ]
                 neighbor_type = list_neighbor_type[estimated_rank]
                 if perplexity_nxt_with_error < perplexity_best + 2.0:
-                    perplexity_nxt = self._calc_perplexity(" ".join(words_nxt))
+                    perplexity_nxt = self._calc_perplexity(n_idx, " ".join(words_nxt))
                 else:
                     perplexity_nxt = perplexity_nxt_with_error
 
@@ -513,6 +527,7 @@ class Optimization:
             print("#" * 80)
             print(f"[run] n_idx:{n_idx} perplexity_best:{perplexity_best_old:.2f}")
             words_best, perplexity_best = self._hillclimbing(
+                n_idx,
                 words_best,
                 perplexity_best_old,
                 score_estimator=self.score_estimators[n_idx],
@@ -529,7 +544,7 @@ class Optimization:
                     words_best = self._get_best_all(n_idx)[0]
                 words_best, neighbor_types = self.ILS_kick(words_best, n_kick=n_kick)
                 print(f"[run] Apply {n_kick} kicks: {neighbor_types}")
-                perplexity_best = self._calc_perplexity(" ".join(words_best))
+                perplexity_best = self._calc_perplexity(n_idx, " ".join(words_best))
             self.list_words_best[n_idx] = words_best
             self.list_perplexity_best[n_idx] = perplexity_best
             self._update_best_all(n_idx, words_best, perplexity_best)

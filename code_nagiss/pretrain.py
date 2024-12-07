@@ -91,28 +91,23 @@ class ScoreDataset(Dataset):
 
 
 def prepare_dataset(
-    training_data: dict[str, float], problem_id: int
+    training_data: list[dict[bytes, float]], problem_id: int
 ) -> tuple[dict[str, int], Dataset]:
     word_to_id = LIST_WORD_TO_ID[problem_id]
     length = LIST_NUM_WORDS[problem_id]
     if problem_id in [1, 2]:
         raise ValueError("problem_id 1 and 2 are not supported")
-    X = torch.empty((50000000, length), dtype=torch.int8)
-    y = torch.empty(50000000, dtype=torch.float)
-    idx = 0
-    for text, score in tqdm(training_data.items(), mininterval=30):
-        words = text.split()
-        if len(words) == length:
-            X[idx] = torch.tensor(
-                [word_to_id[word] for word in words], dtype=torch.int8
-            )
-            y[idx] = math.log(score)
-            idx += 1
-    X = X[:idx]
-    y = y[:idx]
+    num_data = len(training_data[problem_id])
+    X = torch.empty((num_data, length), dtype=torch.int8)
+    y = torch.empty(num_data, dtype=torch.float)
+    for idx, (compressed_text, score) in enumerate(
+        tqdm(training_data[problem_id].items(), mininterval=30)
+    ):
+        assert len(compressed_text) == length
+        X[idx] = torch.tensor(list(compressed_text), dtype=torch.int8)
+        y[idx] = math.log(score)
     print(f"{word_to_id=}")
     dataset = ScoreDataset(X, y)
-    print(f"{len(dataset)=}")
     return word_to_id, dataset
 
 
