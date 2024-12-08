@@ -64,7 +64,7 @@ class ScoreEstimator:
         ).to(device)
         self.model.load_state_dict(checkpoint["model"])
         self.model.eval()
-        self.optimizer = torch.optim.AdamW(self.model.parameters(), lr=0.0001)
+        self.optimizer = torch.optim.AdamW(self.model.parameters(), lr=0.00005)
 
         # 統計用にデータを貯めておく
         self.buffer_texts = []
@@ -139,7 +139,7 @@ def make_neighbors(
         (left, right) for left, right in sorted_segments if right - left >= 4
     ]
 
-    for length in range(1, 5):
+    for length in range(1, 3):
         if length >= 2:
             # 区間を既にソートされている部分に入れる
             results = []
@@ -192,26 +192,26 @@ def make_neighbors(
                 if (t := tuple(permuted)) not in found:
                     found.add(t)
                     results.append((permuted, (left, center, right, 0)))
-                if length == 2:
-                    permuted = (
-                        words[:left]
-                        + words[center:right][::-1]
-                        + words[left:center]
-                        + words[right:]
-                    )
-                    if (t := tuple(permuted)) not in found:
-                        found.add(t)
-                        results.append((permuted, (left, center, right, 1)))
-                    if left_length == 2:
-                        permuted = (
-                            words[:left]
-                            + words[center:right]
-                            + words[left:center][::-1]
-                            + words[right:]
-                        )
-                        if (t := tuple(permuted)) not in found:
-                            found.add(t)
-                            results.append((permuted, (left, center, right, 2)))
+                # if length == 2:
+                #     permuted = (
+                #         words[:left]
+                #         + words[center:right][::-1]
+                #         + words[left:center]
+                #         + words[right:]
+                #     )
+                #     if (t := tuple(permuted)) not in found:
+                #         found.add(t)
+                #         results.append((permuted, (left, center, right, 1)))
+                #     if left_length == 2:
+                #         permuted = (
+                #             words[:left]
+                #             + words[center:right]
+                #             + words[left:center][::-1]
+                #             + words[right:]
+                #         )
+                #         if (t := tuple(permuted)) not in found:
+                #             found.add(t)
+                #             results.append((permuted, (left, center, right, 2)))
             # 左が短い
             left = center - length
             for right_length in itertools.count(length + 1):
@@ -227,16 +227,16 @@ def make_neighbors(
                 if (t := tuple(permuted)) not in found:
                     found.add(t)
                     results.append((permuted, (left, center, right, 0)))
-                if length == 2:
-                    permuted = (
-                        words[:left]
-                        + words[center:right]
-                        + words[left:center][::-1]
-                        + words[right:]
-                    )
-                    if (t := tuple(permuted)) not in found:
-                        found.add(t)
-                        results.append((permuted, (left, center, right, 1)))
+                # if length == 2:
+                #     permuted = (
+                #         words[:left]
+                #         + words[center:right]
+                #         + words[left:center][::-1]
+                #         + words[right:]
+                #     )
+                #     if (t := tuple(permuted)) not in found:
+                #         found.add(t)
+                #         results.append((permuted, (left, center, right, 1)))
             random.shuffle(results)
             yield from results
 
@@ -319,7 +319,7 @@ class Optimization:
         words_best: list[str],
         perplexity_best: float,
         score_estimator: ScoreEstimator,
-        iter_total: int = 2000,
+        iter_total: int = 500,
     ) -> tuple[list[str], float]:
         pbar = tqdm(total=iter_total, mininterval=30)
 
@@ -354,13 +354,13 @@ class Optimization:
         ) -> tuple[float, list[str], list[int]]:
             visited.add(tuple(words))
             depth_to_threshold = {
-                0: 1.008,
-                1: 1.005,
-                2: 1.004,
-                3: 1.003,
-                4: 1.002,
-                5: 1.002,
-                6: 1.0015,
+                0: 1.01,
+                1: 1.007,
+                2: 1.005,
+                3: 1.004,
+                4: 1.003,
+                5: 1.0025,
+                6: 1.002,
                 7: 1.0015,
                 8: 1.001,
                 9: 1.001,
@@ -384,7 +384,7 @@ class Optimization:
                 list_texts_nxt: list[str] = []
                 list_neighbor_type: list = []
 
-                num_candidates = 2048
+                num_candidates = 1024
                 while len(list_words_nxt) < num_candidates:
                     try:
                         words_nxt, neighbor_type = next(neighbors)
@@ -511,7 +511,7 @@ class Optimization:
         self, words: list[str], n_kick: int = 2
     ) -> tuple[list[str], list[int]]:
         neighbor_types = []
-        for _ in range(n_kick * 4 + 4):
+        for _ in range(min(20, n_kick * 3 + 3)):
             r0 = random.randint(0, len(words) - 1)
             r1 = random.randint(0, len(words) - 1)
             words[r0], words[r1] = words[r1], words[r0]
