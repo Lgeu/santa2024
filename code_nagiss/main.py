@@ -384,7 +384,7 @@ class Optimization:
                 list_texts_nxt: list[str] = []
                 list_neighbor_type: list = []
 
-                num_candidates = 1024
+                num_candidates = 1024 if depth < 2 else 2048 if depth < 5 else 4096
                 while len(list_words_nxt) < num_candidates:
                     try:
                         words_nxt, neighbor_type = next(neighbors)
@@ -490,29 +490,12 @@ class Optimization:
 
         return words_best, perplexity_best
 
-    def _calc_n_kick_and_reset(self, n_idx) -> tuple[int, bool]:
-        """??????????"""
-        n_kick: int = self.list_num_kick[n_idx]
-        i = 1
-        while True:
-            if n_kick >= i:
-                n_kick -= i
-            else:
-                break
-            i += 1
-            if i > 16:
-                i = 1
-        flag_reset = n_kick == 0 and i >= 2
-        n_kick = i - n_kick
-        n_kick = n_kick - 1
-        return n_kick, flag_reset
-
     def ILS_kick(
         self, words: list[str], n_kick: int = 2
     ) -> tuple[list[str], list[int]]:
         words = words.copy()
         neighbor_types = []
-        for _ in range(min(20, n_kick * 3 + 3)):
+        for _ in range(n_kick * 7):
             r0 = random.randint(0, len(words) - 1)
             r1 = random.randint(0, len(words) - 1)
             words[r0], words[r1] = words[r1], words[r0]
@@ -537,8 +520,14 @@ class Optimization:
             print(f"[run] n_idx:{n_idx} perplexity_best:{perplexity_best:.2f}")
             did_kick = False
             if perplexity_best_old == perplexity_best:
-                n_kick, flag_reset = self._calc_n_kick_and_reset(n_idx)
-                self.list_num_kick[n_idx] += 1
+                if words_best == self._get_best_all(n_idx)[0]:
+                    self.list_num_kick[n_idx] = 0
+                # reset + 4 -> 3 -> 2 -> 1 -> reset + 4 -> 3 -> 2 -> 1 -> ...
+                self.list_num_kick[n_idx] -= 1
+                flag_reset = self.list_num_kick[n_idx] <= 0
+                if flag_reset:
+                    self.list_num_kick[n_idx] = random.randint(4, 5)
+                n_kick = self.list_num_kick[n_idx]
                 did_kick = True
                 if flag_reset:
                     print("[run] Reset words")
