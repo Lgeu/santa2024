@@ -510,6 +510,7 @@ class Optimization:
     def ILS_kick(
         self, words: list[str], n_kick: int = 2
     ) -> tuple[list[str], list[int]]:
+        words = words.copy()
         neighbor_types = []
         for _ in range(min(20, n_kick * 3 + 3)):
             r0 = random.randint(0, len(words) - 1)
