@@ -2,6 +2,7 @@ import copy
 import gc
 import itertools
 import random
+import warnings
 from collections import Counter
 from time import time
 from typing import Generator, Optional, Union
@@ -54,7 +55,8 @@ class ScoreEstimator:
             )
             checkpoint = torch.load(self.pretrained_model_path, map_location=device)
         else:
-            raise FileNotFoundError
+            warnings.warn(f"[ScoreEstimator] Checkpoint not found: {problem_id}")
+            checkpoint = None
 
         self.word_to_id = LIST_WORD_TO_ID[problem_id]
 
@@ -62,7 +64,8 @@ class ScoreEstimator:
         self.model = SantaNet(
             vocab_size=len(self.word_to_id), channels=128, num_blocks=12
         ).to(device)
-        self.model.load_state_dict(checkpoint["model"])
+        if checkpoint is not None:
+            self.model.load_state_dict(checkpoint["model"])
         self.model.eval()
         self.optimizer = torch.optim.AdamW(self.model.parameters(), lr=0.00005)
 
@@ -81,7 +84,7 @@ class ScoreEstimator:
         X = torch.tensor(X_list, dtype=torch.long, device=self.device)
         with torch.no_grad():
             preds: torch.Tensor = self.model(X).squeeze(-1)  # (B,)
-        return preds.detach().cpu().numpy()
+        return preds.detach().cpu().numpy()  # log perplexity
 
     def update_parameters(self, texts: list[str], scores: list[float]):
         X_list = []
@@ -139,7 +142,8 @@ def make_neighbors(
         (left, right) for left, right in sorted_segments if right - left >= 4
     ]
 
-    for length in range(1, 3):
+    max_length = 2 if len(words) >= 50 else 3
+    for length in range(1, max_length + 1):
         if length >= 2:
             # 区間を既にソートされている部分に入れる
             results = []
@@ -256,18 +260,14 @@ class Optimization:
         self.last_time_score_memo_saved = time()
 
         # ScoreEstimator
-        self.score_estimators = {
-            0: None,
-            1: None,
-            2: None,
-            3: None,
-            4: None,
-            5: ScoreEstimator(
-                problem_id=5,
-                epoch=11,
+        self.score_estimators = [
+            ScoreEstimator(
+                problem_id=problem_id,
+                epoch=epoch,
                 device=torch.device("cuda" if torch.cuda.is_available() else "cpu"),
-            ),
-        }
+            )
+            for problem_id, epoch in enumerate([-1, -1, -1, -1, -1, 11])
+        ]
 
         # 現在までの最良の解
         self.list_words_best: list[list[str]] = []
@@ -395,7 +395,9 @@ class Optimization:
                         list_neighbor_type.append(neighbor_type)
                     except StopIteration:
                         break
-                if len(list_words_nxt) < num_candidates:
+                if len(list_words_nxt) < min(
+                    num_candidates, int(1.5 * len(words) ** 2)
+                ):
                     return None, None, None, max_depth
 
                 # 枝刈り
