@@ -127,9 +127,15 @@ def train_model(problem_id: int = 5) -> None:
     train_size = total_size - val_size
     train_dataset, val_dataset = random_split(dataset, [train_size, val_size])
     train_loader = DataLoader(
-        train_dataset, batch_size=batch_size, shuffle=True, drop_last=True
+        train_dataset,
+        batch_size=batch_size,
+        num_workers=4,
+        shuffle=True,
+        drop_last=True,
     )
-    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
+    val_loader = DataLoader(
+        val_dataset, batch_size=batch_size, num_workers=4, shuffle=False
+    )
 
     model = SantaNet(vocab_size=len(word_to_id), channels=128, num_blocks=12)
     model = model.to(device)
