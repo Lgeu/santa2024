@@ -42,10 +42,10 @@ def make_neighbors(
         (left, right) for left, right in sorted_segments if right - left >= 4
     ]
 
+    results = []
     for length in range(1, 5):
         if length >= 2:
             # 区間を既にソートされている部分に入れる
-            results = []
             for source_l in range(len(words) - length + 1):
                 source_r = source_l + length
                 for target_l, target_r in sorted_segments:
@@ -74,12 +74,9 @@ def make_neighbors(
                         results.append(
                             (permuted, (source_l, source_r, target_l, target_r, 3))
                         )
-            random.shuffle(results)
-            yield from results
 
         r = range(length, len(words) - length + 1)
         for center in random.sample(r, len(r)):
-            results = []
             # 右が短い
             right = center + length
             for left_length in itertools.count(length):
@@ -140,8 +137,9 @@ def make_neighbors(
                     if (t := tuple(permuted)) not in found:
                         found.add(t)
                         results.append((permuted, (left, center, right, 1)))
-            random.shuffle(results)
-            yield from results
+
+    random.shuffle(results)
+    yield from results
 
 
 class Optimization:
@@ -174,6 +172,29 @@ class Optimization:
             if self.flag_use_best:
                 _, list_words = get_path_words_best(idx)
                 assert list_words is not None
+                self.n_keep = 0
+                self.n_shuffle = 20
+                if len(list_words) >= self.n_shuffle:
+                    # list_words = list_words[: self.n_shuffle] + random.sample(
+                    #     list_words[self.n_shuffle :], len(list_words) - self.n_shuffle
+                    # )
+                    # list_words = list_words[: self.n_shuffle] + sorted(
+                    #     list_words[self.n_shuffle :]
+                    # )
+                    # list_words = (
+                    #     random.sample(list_words[: self.n_shuffle], self.n_shuffle)
+                    #     + list_words[self.n_shuffle :]
+                    # )
+                    list_words = (
+                        list_words[: self.n_keep]
+                        + random.sample(
+                            list_words[self.n_keep : self.n_shuffle],
+                            self.n_shuffle - self.n_keep,
+                        )
+                        + list_words[self.n_shuffle :]
+                    )
+                    pass
+
             else:
                 text: str = self.df.iloc[idx, 1]
                 list_words = text.split()
@@ -224,29 +245,69 @@ class Optimization:
         ) -> tuple[float, list[str], list[int]]:
             visited.add(tuple(words))
             depth_to_threshold = {
-                0: 1.008,
-                1: 1.005,
-                2: 1.004,
-                3: 1.003,
-                4: 1.002,
-                5: 1.002,
-                6: 1.0015,
-                7: 1.0015,
-                8: 1.001,
-                9: 1.001,
-                10: 1.001,
-                11: 1.001,
-                12: 1.001,
-                13: 1.001,
-                13: 1.001,
-                14: 1.001,
-                15: 1.001,
-                16: 1.001,
-                17: 1.001,
-                18: 1.001,
-                19: 1.001,
-                20: 1.0,
+                # 0: 1.28,
+                # 1: 1.25,
+                # 2: 1.24,
+                # 3: 1.23,
+                # 4: 1.22,
+                # 5: 1.22,
+                # 6: 1.215,
+                # 7: 1.215,
+                # 8: 1.21,
+                # 9: 1.21,
+                # 10: 1.115,
+                # 11: 1.114,
+                # 12: 1.113,
+                # 13: 1.112,
+                # 14: 1.111,
+                # 15: 1.110,
+                # 16: 1.109,
+                # 17: 1.108,
+                # 18: 1.107,
+                # 19: 1.106,
+                # 20: 1.105,
+                # 21: 1.104,
+                # 22: 1.103,
+                # 23: 1.102,
+                # 24: 1.101,
+                # 25: 1.100,
+                # 26: 1.005,
+                # 27: 1.005,
+                0: 1.10,
+                1: 1.10,
+                2: 1.09,
+                3: 1.09,
+                4: 1.09,
+                5: 1.09,
+                6: 1.08,
+                7: 1.08,
+                8: 1.08,
+                9: 1.07,
+                10: 1.07,
+                11: 1.07,
+                12: 1.06,
+                13: 1.06,
+                14: 1.06,
+                15: 1.05,
+                16: 1.05,
+                17: 1.05,
+                18: 1.04,
+                19: 1.04,
+                20: 1.04,
+                21: 1.03,
+                22: 1.03,
+                23: 1.03,
+                24: 1.02,
+                25: 1.02,
+                26: 1.02,
+                27: 1.01,
+                28: 1.01,
+                29: 1.01,
             }
+            depth_max = 1000
+            for i in range(max(depth_to_threshold.keys()) + 1, depth_max):
+                depth_to_threshold[i] = 1.002
+            depth_to_threshold[depth_max] = 1
 
             neighbors = make_neighbors(words)
             max_depth = depth
@@ -255,11 +316,15 @@ class Optimization:
                 list_texts_nxt: list[str] = []
                 list_neighbor_type: list = []
 
-                while len(list_words_nxt) < 128:
+                while len(list_words_nxt) < 64:
                     try:
                         words_nxt, neighbor_type = next(neighbors)
                         if tuple(words_nxt) in visited:
                             continue
+                        if words_nxt[: self.n_keep] != words_best[: self.n_keep]:
+                            continue
+                        # if words_nxt[self.n_shuffle :] != words_best[self.n_shuffle :]:
+                        #     continue
                         list_words_nxt.append(words_nxt)
                         list_texts_nxt.append(" ".join(words_nxt))
                         list_neighbor_type.append(neighbor_type)
@@ -306,16 +371,23 @@ class Optimization:
                                 max_depth,
                             )
 
+                if pbar.n % 100 == 0:
+                    if perplexity_nxt is not None:
+                        print(
+                            f"[hillclimbing] iter:{pbar.n} best:{perplexity_best:.2f}"
+                            f" nxt:{perplexity_nxt:.2f}"
+                            f" neighbor:{neighbor_type}"
+                            f" depth:{depth}"
+                        )
+                    else:
+                        print(
+                            f"[hillclimbing] iter:{pbar.n} best:{perplexity_best:.2f}"
+                            f" nxt:None"
+                            f" depth:{depth}"
+                        )
+                pbar.update(1)
                 if pbar.n >= iter_total:
                     return None, None, None, max_depth
-                if pbar.n % 100 == 0:
-                    print(
-                        f"[hillclimbing] iter:{pbar.n} best:{perplexity_best:.2f}"
-                        f" nxt:{perplexity_nxt:.2f}"
-                        f" neighbor:{neighbor_type}"
-                        f" depth:{depth}"
-                    )
-                pbar.update(1)
 
         perplexity_nxt, words_nxt, neighbor_types, max_depth = search(words_best)
         if perplexity_nxt is not None:
@@ -331,10 +403,14 @@ class Optimization:
         else:
             print(f"[hillclimbing] No update, max_depth:{max_depth}")
 
+        # print(f"[hillclimbing] End Return words_best:{words_best}")
+        # print(f"[hillclimbing] End Return perplexity_best:{perplexity_best:.2f}")
+
         return words_best, perplexity_best
 
     def _calc_n_kick_and_reset(self, n_idx) -> tuple[int, bool]:
         """??????????"""
+        # return 0, False
         n_kick: int = self.list_num_kick[n_idx]
         i = 1
         while True:
@@ -343,7 +419,7 @@ class Optimization:
             else:
                 break
             i += 1
-            if i > 16:
+            if i > 12:
                 i = 1
         flag_reset = n_kick == 0 and i >= 2
         n_kick = i - n_kick
@@ -355,10 +431,21 @@ class Optimization:
     ) -> tuple[list[str], list[int]]:
         neighbor_types = []
         for _ in range(n_kick):
-            r0 = random.randint(0, len(words) - 1)
-            r1 = random.randint(0, len(words) - 1)
+            # r0 = random.randint(0, len(words) - 1)
+            # r1 = random.randint(0, len(words) - 1)
+            r0 = random.randint(self.n_keep, len(words) - 1)
+            r1 = random.randint(self.n_keep, len(words) - 1)
             words[r0], words[r1] = words[r1], words[r0]
             neighbor_types.append((r0, r1))
+        if n_kick >= 10:
+            # shuffle
+            words[:] = (
+                words[: self.n_keep]
+                + random.sample(
+                    words[self.n_keep : self.n_shuffle], self.n_shuffle - self.n_keep
+                )
+                + words[self.n_shuffle :]
+            )
         return words, neighbor_types
 
     def run(self, list_idx_target: Optional[list[int]] = None):
@@ -393,13 +480,15 @@ class Optimization:
             if not did_kick and perplexity_best < self._get_best_all(n_idx)[1] * 1.1:
                 save_text(self._calc_perplexity, n_idx, " ".join(words_best), verbose=1)
             if time() > self.last_time_score_memo_saved + 600:
+                print("[run] Begin save score_memo")
                 save_score_memo(self.score_memo, self.score_memo_with_error)
                 self.last_time_score_memo_saved = time()
+                print("[run] End save score_memo")
 
 
 if __name__ == "__main__":
     path_input_csv = Path("../input/santa-2024/sample_submission.csv")
     path_model = Path("../input/gemma-2/")
     path_save = Path("./save")
-    optimizer = Optimization(path_input_csv, path_model, path_save)
-    optimizer.run()
+    optimizer = Optimization(path_input_csv, path_model, path_save, flag_use_best=True)
+    optimizer.run([3])
