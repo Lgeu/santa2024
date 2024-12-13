@@ -468,7 +468,7 @@ class Optimization:
                 if pbar.n % 100 == 0:
                     print(
                         f"[hillclimbing] iter:{pbar.n} best:{perplexity_best:.2f}"
-                        f" nxt:{perplexity_nxt:.2f}"
+                        f" nxt:{perplexity_nxt or math.inf:.2f}"
                         f" neighbor:{neighbor_type}"
                         f" depth:{depth}"
                         f" {stats.summary()}"
