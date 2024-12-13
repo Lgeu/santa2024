@@ -1,6 +1,7 @@
 import copy
 import gc
 import itertools
+import math
 import random
 import warnings
 from collections import Counter
@@ -266,7 +267,7 @@ class Optimization:
                 epoch=epoch,
                 device=torch.device("cuda" if torch.cuda.is_available() else "cpu"),
             )
-            for problem_id, epoch in enumerate([-1, -1, -1, -1, -1, 11])
+            for problem_id, epoch in enumerate([-1, -1, -1, -1, 20, 11])
         ]
 
         # 現在までの最良の解
@@ -353,29 +354,130 @@ class Optimization:
             words: list[str], depth: int = 0
         ) -> tuple[float, list[str], list[int]]:
             visited.add(tuple(words))
-            depth_to_threshold = {
-                0: 1.01,
-                1: 1.007,
-                2: 1.005,
-                3: 1.004,
-                4: 1.003,
-                5: 1.0025,
-                6: 1.002,
-                7: 1.0015,
-                8: 1.001,
-                9: 1.001,
-                10: 1.001,
-                11: 1.001,
-                12: 1.001,
-                13: 1.001,
-                14: 1.001,
-                15: 1.001,
-                16: 1.001,
-                17: 1.001,
-                18: 1.001,
-                19: 1.001,
-                20: 1.0,
-            }
+            if n_idx == 0:
+                # 未検証
+                depth_to_threshold = {
+                    0: 1.2,
+                    1: 1.12,
+                    2: 1.08,
+                    3: 1.06,
+                    4: 1.04,
+                    5: 1.03,
+                    6: 1.025,
+                    7: 1.02,
+                    8: 1.015,
+                    9: 1.01,
+                    10: 1.01,
+                    11: 1.01,
+                    12: 1.005,
+                    13: 1.005,
+                    14: 1.002,
+                    15: 1.002,
+                    16: 1.002,
+                    17: 1.001,
+                    18: 1.001,
+                    19: 1.001,
+                    20: 1.0,
+                }
+            elif n_idx in [1, 2]:
+                depth_to_threshold = {
+                    0: 1.2,
+                    1: 1.12,
+                    2: 1.08,
+                    3: 1.06,
+                    4: 1.04,
+                    5: 1.03,
+                    6: 1.025,
+                    7: 1.02,
+                    8: 1.015,
+                    9: 1.01,
+                    10: 1.01,
+                    11: 1.01,
+                    12: 1.005,
+                    13: 1.005,
+                    14: 1.002,
+                    15: 1.002,
+                    16: 1.002,
+                    17: 1.001,
+                    18: 1.001,
+                    19: 1.001,
+                    20: 1.0,
+                }
+            elif n_idx == 3:
+                # 未検証
+                depth_to_threshold = {
+                    0: 1.1,
+                    1: 1.06,
+                    2: 1.04,
+                    3: 1.03,
+                    4: 1.02,
+                    5: 1.015,
+                    6: 1.01,
+                    7: 1.008,
+                    8: 1.006,
+                    9: 1.005,
+                    10: 1.004,
+                    11: 1.003,
+                    12: 1.003,
+                    13: 1.002,
+                    14: 1.002,
+                    15: 1.001,
+                    16: 1.001,
+                    17: 1.001,
+                    18: 1.001,
+                    19: 1.001,
+                    20: 1.0,
+                }
+            elif n_idx == 4:
+                depth_to_threshold = {
+                    0: 1.05,
+                    1: 1.03,
+                    2: 1.02,
+                    3: 1.015,
+                    4: 1.01,
+                    5: 1.008,
+                    6: 1.006,
+                    7: 1.004,
+                    8: 1.003,
+                    9: 1.002,
+                    10: 1.002,
+                    11: 1.002,
+                    12: 1.002,
+                    13: 1.002,
+                    14: 1.001,
+                    15: 1.001,
+                    16: 1.001,
+                    17: 1.001,
+                    18: 1.001,
+                    19: 1.001,
+                    20: 1.0,
+                }
+            elif n_idx == 5:
+                depth_to_threshold = {
+                    0: 1.015,
+                    1: 1.01,
+                    2: 1.007,
+                    3: 1.005,
+                    4: 1.004,
+                    5: 1.0035,
+                    6: 1.003,
+                    7: 1.0025,
+                    8: 1.002,
+                    9: 1.0015,
+                    10: 1.001,
+                    11: 1.001,
+                    12: 1.001,
+                    13: 1.001,
+                    14: 1.001,
+                    15: 1.001,
+                    16: 1.001,
+                    17: 1.001,
+                    18: 1.001,
+                    19: 1.001,
+                    20: 1.0,
+                }
+            else:
+                raise ValueError(f"Invalid n_idx: {n_idx}")
 
             neighbors = make_neighbors(words)
             max_depth = depth
@@ -384,7 +486,7 @@ class Optimization:
                 list_texts_nxt: list[str] = []
                 list_neighbor_type: list = []
 
-                num_candidates = 1024 if depth < 2 else 2048 if depth < 5 else 4096
+                num_candidates = 2048 if depth < 2 else 4096 if depth < 5 else 8192
                 while len(list_words_nxt) < num_candidates:
                     try:
                         words_nxt, neighbor_type = next(neighbors)
@@ -493,11 +595,25 @@ class Optimization:
         return words_best, perplexity_best
 
     def ILS_kick(
-        self, words: list[str], n_kick: int = 2
+        self, n_idx: int, words: list[str], n_kick: int = 2
     ) -> tuple[list[str], list[int]]:
         words = words.copy()
         neighbor_types = []
-        for _ in range(n_kick * 7):
+        if n_kick == 2:
+            length = 10
+            left = random.randint(0, len(words) - length)
+            right = left + length
+            removed = words[left:right]
+            words = words[:left] + words[right:]
+            neighbor_type = [left]
+            for word in removed:
+                insert_idx = random.randint(0, len(words))
+                words.insert(insert_idx, word)
+                neighbor_type.append(insert_idx)
+            neighbor_types.append(tuple(neighbor_type))
+
+        strength = [2, 3, 3, 4, 5, 10]
+        for _ in range(n_kick * strength[n_idx]):
             r0 = random.randint(0, len(words) - 1)
             r1 = random.randint(0, len(words) - 1)
             words[r0], words[r1] = words[r1], words[r0]
@@ -528,13 +644,15 @@ class Optimization:
                 self.list_num_kick[n_idx] -= 1
                 flag_reset = self.list_num_kick[n_idx] <= 0
                 if flag_reset:
-                    self.list_num_kick[n_idx] = random.randint(4, 5)
+                    self.list_num_kick[n_idx] = random.randint(2, 3)
                 n_kick = self.list_num_kick[n_idx]
                 did_kick = True
                 if flag_reset:
                     print("[run] Reset words")
                     words_best = self._get_best_all(n_idx)[0]
-                words_best, neighbor_types = self.ILS_kick(words_best, n_kick=n_kick)
+                words_best, neighbor_types = self.ILS_kick(
+                    n_idx, words_best, n_kick=n_kick
+                )
                 print(f"[run] Apply {n_kick} kicks: {neighbor_types}")
                 perplexity_best = self._calc_perplexity(n_idx, " ".join(words_best))
             self.list_words_best[n_idx] = words_best
@@ -550,4 +668,4 @@ class Optimization:
 
 if __name__ == "__main__":
     optimizer = Optimization()
-    optimizer.run([5])
+    optimizer.run()
