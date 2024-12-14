@@ -249,9 +249,11 @@ def make_neighbors(
 class Optimization:
     def __init__(
         self,
+        n_pop: int=16,
         flag_use_best=True,  # best を使うかどうか
         flag_shuffle=True,  # best を使わない時にシャッフルするかどうか
     ):
+        self.n_pop = n_pop
         self.flag_use_best = flag_use_best
         self.flag_shuffle = flag_shuffle
 
@@ -271,10 +273,16 @@ class Optimization:
         ]
 
         # 現在までの最良の解
-        self.list_words_best: list[list[str]] = []
-        self.list_perplexity_best: list[float] = []
+        self.list_words_pop: list[list[list[str]]] = []
+        self.list_perplexity_pop: list[list[float]] = []
+        self.list_edge_count_pop: list[list[list[int]]] = []
+        self.list_depth_pop: list[list[int]] = []
+        self.no_update_count: list[int] = [0] * NUM_PROBLEMS
+        self.word2idx: list[dict[str, int]] = []
         for idx in range(NUM_PROBLEMS):
-            if self.flag_use_best:
+            words_pop = []
+            perplexity_pop = []
+            if self.flag_use_best: # TODO: load population
                 _, list_words = get_path_words_best(idx)
                 assert list_words is not None
             else:
@@ -283,15 +291,31 @@ class Optimization:
                 if self.flag_shuffle:
                     random.shuffle(list_words)
             text = " ".join(list_words)
-            self.list_words_best.append(list_words.copy())
             score_new = self._calc_perplexity(idx, text)
-            self.list_perplexity_best.append(score_new)
-
+            for _ in range(self.n_pop):
+                words_pop.append(list_words.copy())
+                perplexity_pop.append(score_new)
+            all_words = ["<bos>"] + list(set(list_words)) # dummy word eos = bos
+            word2idx = {w: i for i, w in enumerate(all_words)}
+            self.word2idx.append(word2idx)
+            n_words = len(all_words)
+            edge_count_pop = [[0] * n_words for _ in range(n_words)]
+            for i in range(self.n_pop):
+                edge_count_pop[0][word2idx[list_words[0]]] += 1 # bos -> first word
+                edge_count_pop[word2idx[list_words[-1]]][0] += 1 # last word -> eos
+                for j in range(n_words - 2): # -1 は bos
+                    left_word = list_words[j]
+                    right_word = list_words[j + 1]
+                    edge_count_pop[word2idx[left_word]][word2idx[right_word]] += 1
+            self.list_words_pop.append(words_pop)
+            self.list_perplexity_pop.append(perplexity_pop)
+            self.list_edge_count_pop.append(edge_count_pop)
+            self.list_depth_pop.append([0] * self.n_pop)
             print(f"idx:{idx} score:{score_new:.4f}")
 
         # 行き詰まった時に戻るためのガチの現在までの最良の解
-        self.list_words_best_all = copy.deepcopy(self.list_words_best)
-        self.list_perplexity_best_all = copy.deepcopy(self.list_perplexity_best)
+        self.list_words_pop_best = copy.deepcopy(self.list_words_pop)
+        self.list_perplexity_pop_best = copy.deepcopy(self.list_perplexity_pop)
 
         # 初期化
         self.list_num_kick = [1] * NUM_PROBLEMS
@@ -303,26 +327,64 @@ class Optimization:
             self.calculator, n_idx, self.score_memo, self.score_memo_with_error, text
         )
 
-    def _get_best(self, n_idx: int) -> tuple[list[str], float]:
-        return self.list_words_best[n_idx], self.list_perplexity_best[n_idx]
+    def _get_pop(self, n_idx: int) -> tuple[list[list[str]], list[float]]:
+        return self.list_words_pop[n_idx], self.list_perplexity_pop[n_idx]
 
     def _update_best_all(self, n_idx: int, words: list[str], perplexity: float):
         if perplexity < self.list_perplexity_best_all[n_idx]:
             self.list_words_best_all[n_idx] = words.copy()
             self.list_perplexity_best_all[n_idx] = perplexity
 
-    def _get_best_all(self, n_idx: int) -> tuple[list[str], float]:
-        return self.list_words_best_all[n_idx], self.list_perplexity_best_all[n_idx]
+    def _get_best_all(self, n_idx: int) -> tuple[list[list[str]], list[float]]:
+        return self.list_words_pop_best[n_idx], self.list_perplexity_pop_best[n_idx]
 
-    def _hillclimbing(
+    def _print_pop(self, n_idx: int):
+        words_pop = self.list_words_pop[n_idx]
+        perplexity_pop = self.list_perplexity_pop[n_idx]
+        depth_pop = self.list_depth_pop[n_idx]
+        print(f"idx:{n_idx} depth:{depth_pop}")
+        for words, ppl, depth in zip(words_pop, perplexity_pop, depth_pop):
+            print(f"  {ppl:.2f} {' '.join(words)}")
+
+    def _get_edge_entropy(self, edge_count_pop: list[list[int]]) -> float:
+        h = 0.0
+        n_words = len(edge_count_pop)
+        for i in range(n_words):
+            for j in range(n_words):
+                p = edge_count_pop[i][j] / self.n_pop
+                if p > 0:
+                    h += p * math.log(p)
+        return -h
+
+    def _add_edge_count(self, edge_count_pop: list[list[int]], words: list[str], value: int, word2idx: dict[str, int]):
+        n_words = len(words)
+        edge_count_pop[0][word2idx[words[0]]] += value # bos -> first word
+        edge_count_pop[word2idx[words[-1]]][0] += value # last word -> eos
+        for j in range(n_words - 1):
+            left_word = words[j]
+            right_word = words[j + 1]
+            edge_count_pop[word2idx[left_word]][word2idx[right_word]] += value
+        return edge_count_pop
+
+    def _eval_improvement(self, old_words, new_words, old_score, new_score, old_edge_count_pop, word2idx):
+        old_edge_entropy = self._get_edge_entropy(old_edge_count_pop)
+        new_edge_count_pop = self._add_edge_count(copy.deepcopy(old_edge_count_pop), old_words, -1, word2idx)
+        new_edge_count_pop = self._add_edge_count(new_edge_count_pop, new_words, 1, word2idx)
+        new_edge_entropy = self._get_edge_entropy(new_edge_count_pop)
+        score_diff = new_score - old_score
+        edge_entropy_diff = new_edge_entropy - old_edge_entropy 
+        if score_diff > 0:
+            return 0, score_diff, edge_entropy_diff
+        elif edge_entropy_diff < 0:
+            return score_diff / edge_entropy_diff, score_diff, edge_entropy_diff
+        else:
+            return score_diff * 10000, score_diff, edge_entropy_diff
+
+    def _beam_search(
         self,
         n_idx: int,
-        words_best: list[str],
-        perplexity_best: float,
         score_estimator: ScoreEstimator,
-        iter_total: int = 500,
     ) -> tuple[list[str], float]:
-        pbar = tqdm(total=iter_total, mininterval=30)
 
         class Stats:
             def __init__(self, max_value: int):
@@ -347,13 +409,25 @@ class Optimization:
 
         batch_size = 128
         stats = Stats(max_value=batch_size)
+        word2idx = self.word2idx[n_idx]
+        words_pop = self.list_words_pop[n_idx]
+        perplexity_pop = self.list_perplexity_pop[n_idx]
+        edge_count = self.list_edge_count_pop[n_idx]
+        depth_pop = self.list_depth_pop[n_idx]
+
+        perplexity_best = np.min(perplexity_pop)
+        words_best = words_pop[np.argmin(perplexity_pop)]
 
         visited = set()
+        for words in words_pop:
+            visited.add(tuple(words))
 
         def search(
-            words: list[str], depth: int = 0
+            words_idx: int, depth: int = 0,
         ) -> tuple[float, list[str], list[int]]:
-            visited.add(tuple(words))
+            words = words_pop[words_idx]
+            ppl = perplexity_pop[words_idx]
+
             if n_idx == 0:
                 # 未検証
                 depth_to_threshold = {
@@ -480,7 +554,6 @@ class Optimization:
                 raise ValueError(f"Invalid n_idx: {n_idx}")
 
             neighbors = make_neighbors(words)
-            max_depth = depth
             for _ in itertools.count(0):
                 list_words_nxt: list[list[str]] = []
                 list_texts_nxt: list[str] = []
@@ -500,7 +573,7 @@ class Optimization:
                 if len(list_words_nxt) < min(
                     num_candidates, int(1.5 * len(words) ** 2)
                 ):
-                    return None, None, None, max_depth
+                    return None, None, None, depth, None, None, None
 
                 # 枝刈り
                 # 推定スコア上位 112 個とランダム 16 個を選ぶ ε-greedy
@@ -522,75 +595,85 @@ class Optimization:
                     list_texts_nxt, list_perplexity_nxt_with_error
                 )
 
-                estimated_rank = int(np.argmin(list_perplexity_nxt_with_error))
+                improvements = []
+                score_diffs = [] # debug
+                entropy_diffs = [] # debug
+                for ppl_nxt_with_error, words_nxt in zip(list_perplexity_nxt_with_error, list_words_nxt):
+                    eval_improvement, score_diff, entropy_diff = self._eval_improvement(words, words_nxt, ppl, ppl_nxt_with_error, edge_count, word2idx)
+                    improvements.append(eval_improvement)
+                    score_diffs.append(score_diff)
+                    entropy_diffs.append(entropy_diff)
+
+                estimated_rank = int(np.argmax(improvements))
                 words_nxt = list_words_nxt[estimated_rank]
                 perplexity_nxt_with_error = list_perplexity_nxt_with_error[
                     estimated_rank
                 ]
                 neighbor_type = list_neighbor_type[estimated_rank]
+                improvement = improvements[estimated_rank]
+                score_diff = score_diffs[estimated_rank]
+                entropy_diff = entropy_diffs[estimated_rank]
+
                 if perplexity_nxt_with_error < perplexity_best + 2.0:
                     perplexity_nxt = self._calc_perplexity(n_idx, " ".join(words_nxt))
                 else:
                     perplexity_nxt = perplexity_nxt_with_error
 
-                if perplexity_nxt < perplexity_best:
+                if perplexity_nxt < ppl:
                     stats.accepted[estimated_rank] += 1
-                    return perplexity_nxt, words_nxt, [neighbor_type], max_depth
-                elif perplexity_nxt < perplexity_best * depth_to_threshold[depth]:
-                    search_order = list(range(batch_size))
-                    random.shuffle(search_order)
-                    for estimated_rank in search_order:
-                        words_nxt = list_words_nxt[estimated_rank]
-                        perplexity_nxt = list_perplexity_nxt_with_error[estimated_rank]
-                        neighbor_type = list_neighbor_type[estimated_rank]
-                        if (
-                            perplexity_nxt
-                            >= perplexity_best * depth_to_threshold[depth]
-                        ):
-                            stats.rejected[estimated_rank] += 1
-                            continue
-                        if tuple(words_nxt) in visited:
-                            continue
-                        stats.accepted[estimated_rank] += 1
-                        perplexity_nxt, words_nxt, neighbor_types, max_depth_ = search(
-                            words_nxt, depth + 1
-                        )
-                        max_depth = max(max_depth, max_depth_)
-                        if perplexity_nxt is not None:
-                            assert perplexity_nxt < perplexity_best
-                            return (
-                                perplexity_nxt,
-                                words_nxt,
-                                [neighbor_type] + neighbor_types,
-                                max_depth,
-                            )
+                    return perplexity_nxt, words_nxt, [neighbor_type], 0, improvement, score_diff, entropy_diff
+                elif perplexity_nxt < ppl * depth_to_threshold[depth]:
+                    stats.accepted[estimated_rank] += 1
+                    return perplexity_nxt, words_nxt, [neighbor_type], depth + 1, improvement, score_diff, entropy_diff
+                else:
+                    stats.rejected[estimated_rank] += 1
+                    return None, None, None, depth, None, None, None
 
-                if pbar.n >= iter_total:
-                    return None, None, None, max_depth
-                if pbar.n % 100 == 0:
-                    print(
-                        f"[hillclimbing] iter:{pbar.n} best:{perplexity_best:.2f}"
-                        f" nxt:{perplexity_nxt or math.inf:.2f}"
-                        f" neighbor:{neighbor_type}"
-                        f" depth:{depth}"
-                        f" {stats.summary()}"
-                    )
-                pbar.update(1)
+                #     print(
+                #         f"[hillclimbing] iter:{pbar.n} best:{perplexity_best:.2f}"
+                #         f" nxt:{perplexity_nxt or math.inf:.2f}"
+                #         f" neighbor:{neighbor_type}"
+                #         f" depth:{depth}"
+                #         f" {stats.summary()}"
+                #     )
+        for i in range(self.n_pop):
+            perplexity_nxt, words_nxt, neighbor_types, depth_nxt, improvement, score_diff, entropy_diff = search(i)
+            if perplexity_nxt is not None:
+                edge_count = self._add_edge_count(edge_count, words_pop[i], -1, word2idx)
+                edge_count = self._add_edge_count(edge_count, words_nxt, 1, word2idx)
+                words_pop[i] = words_nxt
+                perplexity_pop[i] = perplexity_nxt
+                depth_pop[i] = depth_nxt
 
-        perplexity_nxt, words_nxt, neighbor_types, max_depth = search(words_best)
-        if perplexity_nxt is not None:
-            assert perplexity_nxt < perplexity_best
+                # assert perplexity_nxt < perplexity_best
+        #     print(
+        #         f"[hillclimbing] Update: {perplexity_best:.2f}"
+        #         f" -> {perplexity_nxt:.2f},"
+        #         f" neighbor:{','.join(map(str, neighbor_types))}"
+        #         f" max_depth:{max_depth}"
+        #         f" {stats.summary()}"
+        #     )
+        #     perplexity_best = perplexity_nxt
+        #     words_best = words_nxt
+        # else:
+        #     print(f"[hillclimbing] No update, max_depth:{max_depth} {stats.summary()}")
+
+        best_idx = np.argmin(perplexity_pop)
+        words_best_new = words_pop[best_idx]
+        perplexity_best_new = perplexity_pop[best_idx]
+        if perplexity_best_new < perplexity_best:
             print(
-                f"[hillclimbing] Update: {perplexity_best:.2f}"
-                f" -> {perplexity_nxt:.2f},"
-                f" neighbor:{','.join(map(str, neighbor_types))}"
-                f" max_depth:{max_depth}"
+                f"[beam_search] Update: {perplexity_best:.2f}"
+                f" -> {perplexity_best_new:.2f},"
                 f" {stats.summary()}"
             )
-            perplexity_best = perplexity_nxt
-            words_best = words_nxt
-        else:
-            print(f"[hillclimbing] No update, max_depth:{max_depth} {stats.summary()}")
+            words_best = words_best_new
+            perplexity_best = perplexity_best_new
+        
+        self.list_words_pop[n_idx] = words_pop
+        self.list_perplexity_pop[n_idx] = perplexity_pop
+        self.list_edge_count_pop[n_idx] = edge_count
+        self.list_depth_pop[n_idx] = depth_pop
 
         return words_best, perplexity_best
 
@@ -625,19 +708,23 @@ class Optimization:
             list_idx_target = list(range(NUM_PROBLEMS))
         for n_idx in itertools.cycle(list_idx_target):
             free_memory()
-            words_best, perplexity_best_old = self._get_best(n_idx)
+            words_pop, perplexity_pop = self._get_pop(n_idx)
+            best_idx = np.argmin(perplexity_pop)
+            words_best = words_pop[best_idx]
+            perplexity_best_old = perplexity_pop[best_idx]
+
             print("#" * 80)
             print(f"[run] n_idx:{n_idx} perplexity_best:{perplexity_best_old:.2f}")
-            words_best, perplexity_best = self._hillclimbing(
+            words_best, perplexity_best = self._beam_search(
                 n_idx,
-                words_best,
-                perplexity_best_old,
                 score_estimator=self.score_estimators[n_idx],
-                iter_total=500,
             )
             print(f"[run] n_idx:{n_idx} perplexity_best:{perplexity_best:.2f}")
             did_kick = False
             if perplexity_best_old == perplexity_best:
+                self.no_update_count[n_idx] += 1
+            if self.no_update_count[n_idx] > 10:
+                self.no_update_count[n_idx] = 0
                 if words_best == self._get_best_all(n_idx)[0]:
                     self.list_num_kick[n_idx] = 0
                 # reset + 4 -> 3 -> 2 -> 1 -> reset + 4 -> 3 -> 2 -> 1 -> ...
@@ -649,23 +736,44 @@ class Optimization:
                 did_kick = True
                 if flag_reset:
                     print("[run] Reset words")
-                    words_best = self._get_best_all(n_idx)[0]
-                words_best, neighbor_types = self.ILS_kick(
-                    n_idx, words_best, n_kick=n_kick
-                )
-                print(f"[run] Apply {n_kick} kicks: {neighbor_types}")
-                perplexity_best = self._calc_perplexity(n_idx, " ".join(words_best))
-            self.list_words_best[n_idx] = words_best
-            self.list_perplexity_best[n_idx] = perplexity_best
-            self._update_best_all(n_idx, words_best, perplexity_best)
-            if not did_kick and perplexity_best < self._get_best_all(n_idx)[1] * 1.1:
+                    self.list_words_pop[n_idx] = self._get_best_all(n_idx)[0]
+                for i in range(self.n_pop):
+                    self.list_words_pop[n_idx][i], neighbor_types = self.ILS_kick(
+                        n_idx, self.list_words_pop[n_idx][i], n_kick=n_kick
+                    )
+                # print(f"[run] Apply {n_kick} kicks: {neighbor_types}")
+                print(f"[run] Apply {n_kick} kicks for each population")
+                for i in range(self.n_pop): # update perplexity
+                    self.list_perplexity_pop[n_idx][i] = self._calc_perplexity(n_idx, " ".join(self.list_words_pop[n_idx][i]))
+                    self.list_depth_pop[n_idx][i] = 0
+            # self._update_best_all(n_idx, words_best, perplexity_best)
+            if not did_kick and perplexity_best < np.min(self._get_best_all(n_idx)[1]) * 1.1:
                 save_text(self._calc_perplexity, n_idx, " ".join(words_best), verbose=1)
+
+            self._print_pop(n_idx) # debug
+
             if time() > self.last_time_score_memo_saved + 1800:
                 save_score_memo(self.score_memo, self.score_memo_with_error)
                 self.last_time_score_memo_saved = time()
                 self.score_estimators[n_idx].save_model()
 
-
+# %%
 if __name__ == "__main__":
+    # GPU warm up
+    print("Warming up GPU...")
+    dummy_model = torch.nn.Sequential(
+        torch.nn.Linear(10, 5),
+        torch.nn.ReLU(),
+        torch.nn.Linear(5, 1)
+    ).cuda()
+    dummy_input = torch.randn(100, 10).cuda()
+    with torch.no_grad():
+        _ = dummy_model(dummy_input)
+    print("GPU warm up done")
+
+    # %%
     optimizer = Optimization()
-    optimizer.run()
+    # %%
+    optimizer.run([5])
+    # %%
+
