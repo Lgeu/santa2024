@@ -641,7 +641,7 @@ class Optimization:
                 #         f" {stats.summary()}"
                 #     )
         for i in range(self.n_pop):
-            perplexity_nxt, words_nxt, neighbor_types, depth_nxt, improvement, score_diff, entropy_diff = search(i)
+            perplexity_nxt, words_nxt, neighbor_types, depth_nxt, improvement, score_diff, entropy_diff = search(i, depth_pop[i])
             if perplexity_nxt is not None:
                 edge_count = self._add_edge_count(edge_count, words_pop[i], -1, word2idx)
                 edge_count = self._add_edge_count(edge_count, words_nxt, 1, word2idx)
