@@ -278,6 +278,8 @@ class Optimization:
         self.list_edge_count_pop: list[list[list[int]]] = []
         self.list_depth_pop: list[list[int]] = []
         self.no_update_count: list[int] = [0] * NUM_PROBLEMS
+        self.list_visited: list[set[tuple[str]]] = [set() for _ in range(NUM_PROBLEMS)]
+        self.list_perplexity_curr_best: list[float] = []
         self.word2idx: list[dict[str, int]] = []
         for idx in range(NUM_PROBLEMS):
             words_pop = []
@@ -311,6 +313,7 @@ class Optimization:
             self.list_perplexity_pop.append(perplexity_pop)
             self.list_edge_count_pop.append(edge_count_pop)
             self.list_depth_pop.append([0] * self.n_pop)
+            self.list_perplexity_curr_best.append(np.min(perplexity_pop))
             print(f"idx:{idx} score:{score_new:.4f}")
 
         # 行き詰まった時に戻るためのガチの現在までの最良の解
@@ -378,7 +381,7 @@ class Optimization:
         elif edge_entropy_diff < 0:
             return score_diff / edge_entropy_diff, score_diff, edge_entropy_diff
         else:
-            return score_diff * 10000, score_diff, edge_entropy_diff
+            return -score_diff * 10000, score_diff, edge_entropy_diff
 
     def _beam_search(
         self,
@@ -418,7 +421,7 @@ class Optimization:
         perplexity_best = np.min(perplexity_pop)
         words_best = words_pop[np.argmin(perplexity_pop)]
 
-        visited = set()
+        visited = self.list_visited[n_idx]
         for words in words_pop:
             visited.add(tuple(words))
 
@@ -427,6 +430,7 @@ class Optimization:
         ) -> tuple[float, list[str], list[int]]:
             words = words_pop[words_idx]
             ppl = perplexity_pop[words_idx]
+            visited.add(tuple(words))
 
             if n_idx == 0:
                 # 未検証
@@ -674,6 +678,7 @@ class Optimization:
         self.list_perplexity_pop[n_idx] = perplexity_pop
         self.list_edge_count_pop[n_idx] = edge_count
         self.list_depth_pop[n_idx] = depth_pop
+        self.list_visited[n_idx] = visited
 
         return words_best, perplexity_best
 
@@ -721,10 +726,11 @@ class Optimization:
             )
             print(f"[run] n_idx:{n_idx} perplexity_best:{perplexity_best:.2f}")
             did_kick = False
-            if perplexity_best_old == perplexity_best:
-                self.no_update_count[n_idx] += 1
-            else:
+            if perplexity_best < self.list_perplexity_curr_best[n_idx]:
                 self.no_update_count[n_idx] = 0
+                self.list_perplexity_curr_best[n_idx] = perplexity_best
+            else:
+                self.no_update_count[n_idx] += 1
 
             if self.no_update_count[n_idx] > 10:
                 self.no_update_count[n_idx] = 0
@@ -749,6 +755,8 @@ class Optimization:
                 for i in range(self.n_pop): # update perplexity
                     self.list_perplexity_pop[n_idx][i] = self._calc_perplexity(n_idx, " ".join(self.list_words_pop[n_idx][i]))
                     self.list_depth_pop[n_idx][i] = 0
+                self.list_perplexity_curr_best[n_idx] = np.min(self.list_perplexity_pop[n_idx])
+                self.list_visited[n_idx] = set()
             # self._update_best_all(n_idx, words_best, perplexity_best)
             if not did_kick and perplexity_best < np.min(self._get_best_all(n_idx)[1]) * 1.1:
                 save_text(self._calc_perplexity, n_idx, " ".join(words_best), verbose=1)
