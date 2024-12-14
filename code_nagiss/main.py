@@ -723,6 +723,9 @@ class Optimization:
             did_kick = False
             if perplexity_best_old == perplexity_best:
                 self.no_update_count[n_idx] += 1
+            else:
+                self.no_update_count[n_idx] = 0
+
             if self.no_update_count[n_idx] > 10:
                 self.no_update_count[n_idx] = 0
                 if words_best == self._get_best_all(n_idx)[0]:
