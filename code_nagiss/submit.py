@@ -131,7 +131,9 @@ def main():
         while True:
             _, score_old = get_best_score_from_submissions(path_save_submissions)
             score_old = score_old or math.inf
-            update_submission(df, path_save, path_save_submissions)
+            path_submission, scores = update_submission(
+                df, path_save, path_save_submissions
+            )
             path_best_new, score_new = get_best_score_from_submissions(
                 path_save_submissions
             )
@@ -139,6 +141,8 @@ def main():
             if score_new < score_old:
                 print("New best submission found.")
                 print(f"Best score improved: {score_old} -> {score_new}")
+                scores_str = ", ".join(f"{score}" for score in scores)
+                print(f"Scores: {scores_str}")
                 submit_to_kaggle(path_best_new, comment=scores_str)
             else:
                 print("No improvement in score.")
