@@ -296,6 +296,77 @@ class Optimization:
         # 初期化
         self.list_num_kick = [1] * NUM_PROBLEMS
 
+        # ビームサーチ
+        self.list_population: list[list[str]] = [[] for _ in range(NUM_PROBLEMS)]
+        self.list_perplexity_population: list[float] = [np.inf] * NUM_PROBLEMS
+        self.word_to_id = LIST_WORD_TO_ID
+
+    def _calc_dist(
+        self,
+        n_idx: int,
+        list_words1: Union[list[str], list[list[str]]],
+        list_words2: Union[list[str], list[list[str]]],
+    ) -> int:
+        if (list_words1 == []) or (list_words2 == []):
+            return len(self.list_words_best[n_idx])
+        if isinstance(list_words1[0], str):
+            list_words1 = [list_words1]
+        if isinstance(list_words2[0], str):
+            list_words2 = [list_words2]
+        list_id1 = [
+            [self.word_to_id[n_idx][word] for word in words] for words in list_words1
+        ]
+        list_id2 = [
+            [self.word_to_id[n_idx][word] for word in words] for words in list_words2
+        ]
+        list_id1 = np.array(list_id1)
+        list_id2 = np.array(list_id2)
+
+        # use lcs to compute distance
+        # def get_lcs_length(a, b):
+        #     a = np.array(a)
+        #     b = np.array(b)
+        #     equal = a[:, None] == b[None, :]
+        #     dp = np.zeros((len(a) + 1, len(b) + 1), dtype=np.int32)
+        #     for i in range(len(a)):
+        #         dp[i + 1][1:] = np.maximum(dp[i][1:], dp[i][:-1] + equal[i])
+        #         dp[i + 1] = np.maximum.accumulate(dp[i + 1])
+        #     return dp[-1][-1]
+
+        # lcs_length_max = 0
+        # for id1 in list_id1:
+        #     for id2 in list_id2:
+        #         lcs_length_max = max(lcs_length_max, get_lcs_length(id1, id2))
+
+        # written by o1
+        N1, L1 = list_id1.shape
+        N2, L2 = list_id2.shape
+
+        # equal: (N1, N2, L1, L2)
+        equal = (list_id1[:, None, :, None] == list_id2[None, :, None, :]).astype(
+            np.int16
+        )
+
+        dp = np.zeros((N1, N2, L1 + 1, L2 + 1), dtype=np.int16)
+
+        for i in range(L1):
+            # dp[:, :, i, 1:] と dp[:, :, i, :-1] は形状 (N1, N2, L2)
+            dp[:, :, i + 1, 1:] = np.maximum(
+                dp[:, :, i, 1:],  # パス1 (i進めただけ)
+                dp[:, :, i, :-1] + equal[:, :, i],  # パス2 (マッチした場合の伸び)
+            )
+            # 累積最大化 (axis=-1: L2方向)
+            dp[:, :, i + 1] = np.maximum.accumulate(dp[:, :, i + 1], axis=-1)
+
+        # 各組み合わせのLCS長
+        all_lcs = dp[:, :, -1, -1]
+
+        # lcs_length_max
+        lcs_length_max = all_lcs.max()
+
+        dist = len(list_words1[0]) - lcs_length_max
+        return dist
+
     def _calc_perplexity(
         self, n_idx: int, text: Union[str, list[str]]
     ) -> Union[float, list[float]]:
@@ -594,6 +665,349 @@ class Optimization:
 
         return words_best, perplexity_best
 
+    def _beam_search(
+        self,
+        n_idx: int,
+        score_estimator: ScoreEstimator,
+        popluation_size: int = 16,
+        iter_total: int = 1000,
+        initial_dist_minimum: Optional[int] = None,
+    ):
+        if initial_dist_minimum is None:
+            initial_dist_minimum = len(self.list_words_best[n_idx]) // 3
+        # initialize population
+        self.list_population[n_idx] = []
+        self.list_perplexity_population[n_idx] = []
+        for i in range(popluation_size):
+            while True:
+                words = self.list_words_best[n_idx].copy()
+                random.shuffle(words)
+                dist = self._calc_dist(n_idx, words, self.list_population[n_idx])
+                print(f"dist: {dist}\twords: {words}")
+                if dist >= initial_dist_minimum:
+                    break
+            self.list_population[n_idx].append(words)
+        self.list_perplexity_population[n_idx] = [
+            self._calc_perplexity(n_idx, " ".join(words))
+            for words in self.list_population[n_idx]
+        ]
+
+        class Stats:
+            def __init__(self, max_value: int):
+                self.max_value = max_value
+                self.accepted = Counter()
+                self.rejected = Counter()
+
+            def summary(self) -> str:
+                n_bins = 8
+                accepted = [0] * n_bins
+                for value, count in self.accepted.items():
+                    assert 0 <= value < self.max_value
+                    accepted[value * n_bins // self.max_value] += count
+                rejected = [0] * n_bins
+                for value, count in self.rejected.items():
+                    assert 0 <= value < self.max_value
+                    rejected[value * n_bins // self.max_value] += count
+                return (
+                    f"accepted:{accepted} rejected:{rejected}"
+                    f" total:{sum(accepted) + sum(rejected)}"
+                )
+
+        pbar = tqdm(total=iter_total, mininterval=30)
+
+        batch_size = 128
+        stats = Stats(max_value=batch_size)
+
+        visited = set()
+
+        perplexity_best = np.inf
+
+        def search(
+            words: list[str],
+            depth: int = 0,
+            distance_minimum: int = 0,
+            population_other: list[list[str]] = [],
+        ) -> tuple[float, list[str], list[int]]:
+            visited.add(tuple(words))
+            if n_idx == 0:
+                # 未検証
+                depth_to_threshold = {
+                    0: 1.2,
+                    1: 1.12,
+                    2: 1.08,
+                    3: 1.06,
+                    4: 1.04,
+                    5: 1.03,
+                    6: 1.025,
+                    7: 1.02,
+                    8: 1.015,
+                    9: 1.01,
+                    10: 1.01,
+                    11: 1.01,
+                    12: 1.005,
+                    13: 1.005,
+                    14: 1.002,
+                    15: 1.002,
+                    16: 1.002,
+                    17: 1.001,
+                    18: 1.001,
+                    19: 1.001,
+                    20: 1.0,
+                }
+            elif n_idx in [1, 2]:
+                depth_to_threshold = {
+                    0: 1.2,
+                    1: 1.12,
+                    2: 1.08,
+                    3: 1.06,
+                    4: 1.04,
+                    5: 1.03,
+                    6: 1.025,
+                    7: 1.02,
+                    8: 1.015,
+                    9: 1.01,
+                    10: 1.01,
+                    11: 1.01,
+                    12: 1.005,
+                    13: 1.005,
+                    14: 1.002,
+                    15: 1.002,
+                    16: 1.002,
+                    17: 1.001,
+                    18: 1.001,
+                    19: 1.001,
+                    20: 1.0,
+                }
+            elif n_idx == 3:
+                # 未検証
+                depth_to_threshold = {
+                    0: 1.1,
+                    1: 1.06,
+                    2: 1.04,
+                    3: 1.03,
+                    4: 1.02,
+                    5: 1.015,
+                    6: 1.01,
+                    7: 1.008,
+                    8: 1.006,
+                    9: 1.005,
+                    10: 1.004,
+                    11: 1.003,
+                    12: 1.003,
+                    13: 1.002,
+                    14: 1.002,
+                    15: 1.001,
+                    16: 1.001,
+                    17: 1.001,
+                    18: 1.001,
+                    19: 1.001,
+                    20: 1.0,
+                }
+            elif n_idx == 4:
+                depth_to_threshold = {
+                    0: 1.05,
+                    1: 1.03,
+                    2: 1.02,
+                    3: 1.015,
+                    4: 1.01,
+                    5: 1.008,
+                    6: 1.006,
+                    7: 1.004,
+                    8: 1.003,
+                    9: 1.002,
+                    10: 1.002,
+                    11: 1.002,
+                    12: 1.002,
+                    13: 1.002,
+                    14: 1.001,
+                    15: 1.001,
+                    16: 1.001,
+                    17: 1.001,
+                    18: 1.001,
+                    19: 1.001,
+                    20: 1.0,
+                }
+            elif n_idx == 5:
+                depth_to_threshold = {
+                    0: 1.015,
+                    1: 1.01,
+                    2: 1.007,
+                    3: 1.005,
+                    4: 1.004,
+                    5: 1.0035,
+                    6: 1.003,
+                    7: 1.0025,
+                    8: 1.002,
+                    9: 1.0015,
+                    10: 1.001,
+                    11: 1.001,
+                    12: 1.001,
+                    13: 1.001,
+                    14: 1.001,
+                    15: 1.001,
+                    16: 1.001,
+                    17: 1.001,
+                    18: 1.001,
+                    19: 1.001,
+                    20: 1.0,
+                }
+            else:
+                raise ValueError(f"Invalid n_idx: {n_idx}")
+
+            neighbors = make_neighbors(words)
+            max_depth = depth
+            for _ in itertools.count(0):
+                list_words_nxt: list[list[str]] = []
+                list_texts_nxt: list[str] = []
+                list_neighbor_type: list = []
+
+                num_candidates = 2048 if depth < 2 else 4096 if depth < 5 else 8192
+                while len(list_words_nxt) < num_candidates:
+                    try:
+                        words_nxt, neighbor_type = next(neighbors)
+                        if tuple(words_nxt) in visited:
+                            continue
+                        if (
+                            distance_minimum > 0
+                            and self._calc_dist(n_idx, words_nxt, population_other)
+                            < distance_minimum
+                        ):
+                            continue
+                        list_words_nxt.append(words_nxt)
+                        list_texts_nxt.append(" ".join(words_nxt))
+                        list_neighbor_type.append(neighbor_type)
+                    except StopIteration:
+                        break
+                if len(list_words_nxt) < min(
+                    num_candidates, int(1.5 * len(words) ** 2)
+                ):
+                    return None, None, None, max_depth
+
+                # 枝刈り
+                # 推定スコア上位 112 個とランダム 16 個を選ぶ ε-greedy
+                estimated_scores = score_estimator.estimate_scores(list_texts_nxt)
+                indices_sorted = np.argsort(estimated_scores).tolist()
+                indices_keep = indices_sorted[:112] + random.sample(
+                    indices_sorted[112:], 16
+                )
+                assert len(indices_keep) == batch_size
+                list_words_nxt = [list_words_nxt[i] for i in indices_keep]
+                list_texts_nxt = [list_texts_nxt[i] for i in indices_keep]
+                list_neighbor_type = [list_neighbor_type[i] for i in indices_keep]
+
+                list_perplexity_nxt_with_error = self._calc_perplexity(
+                    n_idx, list_texts_nxt
+                )
+
+                score_estimator.update_parameters(
+                    list_texts_nxt, list_perplexity_nxt_with_error
+                )
+
+                estimated_rank = int(np.argmin(list_perplexity_nxt_with_error))
+                words_nxt = list_words_nxt[estimated_rank]
+                perplexity_nxt_with_error = list_perplexity_nxt_with_error[
+                    estimated_rank
+                ]
+                neighbor_type = list_neighbor_type[estimated_rank]
+                if perplexity_nxt_with_error < perplexity_best + 2.0:
+                    perplexity_nxt = self._calc_perplexity(n_idx, " ".join(words_nxt))
+                else:
+                    perplexity_nxt = perplexity_nxt_with_error
+
+                if perplexity_nxt < perplexity_best:
+                    stats.accepted[estimated_rank] += 1
+                    return perplexity_nxt, words_nxt, [neighbor_type], max_depth
+                elif perplexity_nxt < perplexity_best * depth_to_threshold[depth]:
+                    search_order = list(range(batch_size))
+                    random.shuffle(search_order)
+                    for estimated_rank in search_order:
+                        words_nxt = list_words_nxt[estimated_rank]
+                        perplexity_nxt = list_perplexity_nxt_with_error[estimated_rank]
+                        neighbor_type = list_neighbor_type[estimated_rank]
+                        if (
+                            perplexity_nxt
+                            >= perplexity_best * depth_to_threshold[depth]
+                        ):
+                            stats.rejected[estimated_rank] += 1
+                            continue
+                        if tuple(words_nxt) in visited:
+                            continue
+                        stats.accepted[estimated_rank] += 1
+                        perplexity_nxt, words_nxt, neighbor_types, max_depth_ = search(
+                            words_nxt, depth + 1, distance_minimum, population_other
+                        )
+                        max_depth = max(max_depth, max_depth_)
+                        if perplexity_nxt is not None:
+                            assert perplexity_nxt < perplexity_best
+                            return (
+                                perplexity_nxt,
+                                words_nxt,
+                                [neighbor_type] + neighbor_types,
+                                max_depth,
+                            )
+
+                if pbar.n >= iter_total:
+                    return None, None, None, max_depth
+                if pbar.n % 100 == 0:
+                    print(
+                        f"[hillclimbing] iter:{pbar.n} best:{perplexity_best:.2f}"
+                        f" nxt:{perplexity_nxt or math.inf:.2f}"
+                        f" neighbor:{neighbor_type}"
+                        f" depth:{depth}"
+                        f" {stats.summary()}"
+                    )
+                pbar.update(1)
+
+        for dist_minimum in range(initial_dist_minimum, 0, -1):
+            print(f"[beam_search] dist_minimum:{dist_minimum}")
+            # search order
+            search_order = list(range(popluation_size))
+            cnt_no_updates = [0] * popluation_size
+            max_no_updates = 3
+            while max(cnt_no_updates) < max_no_updates:
+                random.shuffle(search_order)
+                for i in search_order:
+                    if cnt_no_updates[i] >= max_no_updates:
+                        print(f"[beam_search] Skip i:{i}")
+                        continue
+                    print(f"[beam_search] Run i:{i}")
+                    perplexity_best = self.list_perplexity_population[n_idx][i]
+                    population_other = (
+                        self.list_population[n_idx][:i]
+                        + self.list_population[n_idx][i + 1 :]
+                    )
+                    perplexity_nxt, words_nxt, neighbor_types, max_depth = search(
+                        self.list_population[n_idx][i],
+                        distance_minimum=dist_minimum,
+                        population_other=population_other,
+                    )
+                    if perplexity_nxt is not None:
+                        assert perplexity_nxt < perplexity_best
+                        print(
+                            f"[beam_search] Update: {perplexity_best:.2f}"
+                            f" -> {perplexity_nxt:.2f},"
+                            f" neighbor:{','.join(map(str, neighbor_types))}"
+                            f" max_depth:{max_depth}"
+                            f" {stats.summary()}"
+                        )
+                        perplexity_best = perplexity_nxt
+                        self.list_population[n_idx][i] = words_nxt
+                        self.list_perplexity_population[n_idx][i] = perplexity_nxt
+                        cnt_no_updates[i] = 0
+                    else:
+                        print(
+                            f"[beam_search] No update, max_depth:{max_depth} {stats.summary()}"
+                        )
+                        cnt_no_updates[i] += 1
+
+        perplexity_best = min(self.list_perplexity_population[n_idx])
+        words_best = self.list_population[n_idx][
+            self.list_perplexity_population[n_idx].index(perplexity_best)
+        ]
+        perplexity_best = self._calc_perplexity(n_idx, " ".join(words_best))
+
+        return words_best, perplexity_best
+
     def ILS_kick(
         self, n_idx: int, words: list[str], n_kick: int = 2
     ) -> tuple[list[str], list[int]]:
@@ -628,12 +1042,15 @@ class Optimization:
             words_best, perplexity_best_old = self._get_best(n_idx)
             print("#" * 80)
             print(f"[run] n_idx:{n_idx} perplexity_best:{perplexity_best_old:.2f}")
-            words_best, perplexity_best = self._hillclimbing(
-                n_idx,
-                words_best,
-                perplexity_best_old,
-                score_estimator=self.score_estimators[n_idx],
-                iter_total=500,
+            # words_best, perplexity_best = self._hillclimbing(
+            #     n_idx,
+            #     words_best,
+            #     perplexity_best_old,
+            #     score_estimator=self.score_estimators[n_idx],
+            #     iter_total=500,
+            # )
+            words_best, perplexity_best = self._beam_search(
+                n_idx, self.score_estimators[n_idx], popluation_size=16, iter_total=500
             )
             print(f"[run] n_idx:{n_idx} perplexity_best:{perplexity_best:.2f}")
             did_kick = False
@@ -667,5 +1084,5 @@ class Optimization:
 
 
 if __name__ == "__main__":
-    optimizer = Optimization()
+    optimizer = Optimization(flag_use_best=False)
     optimizer.run()
