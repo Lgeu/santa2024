@@ -669,7 +669,7 @@ class Optimization:
         self,
         n_idx: int,
         score_estimator: ScoreEstimator,
-        popluation_size: int = 16,
+        population_size: int = 16,
         iter_total: int = 1000,
         initial_dist_minimum: Optional[int] = None,
     ):
@@ -678,7 +678,7 @@ class Optimization:
         # initialize population
         self.list_population[n_idx] = []
         self.list_perplexity_population[n_idx] = []
-        for i in range(popluation_size):
+        for i in range(population_size):
             while True:
                 words = self.list_words_best[n_idx].copy()
                 random.shuffle(words)
@@ -960,17 +960,23 @@ class Optimization:
 
         for dist_minimum in range(initial_dist_minimum, 0, -1):
             print(f"[beam_search] dist_minimum:{dist_minimum}")
+            visited = set()
             # search order
-            search_order = list(range(popluation_size))
-            cnt_no_updates = [0] * popluation_size
-            max_no_updates = 3
-            while max(cnt_no_updates) < max_no_updates:
+            search_order = list(range(population_size))
+            cnt_no_updates = [0] * population_size
+            max_no_updates = 5
+            while min(cnt_no_updates) < max_no_updates:
+                print(
+                    f"[beam_search] perplexities:{self.list_perplexity_population[n_idx]}"
+                )
                 random.shuffle(search_order)
                 for i in search_order:
                     if cnt_no_updates[i] >= max_no_updates:
                         print(f"[beam_search] Skip i:{i}")
                         continue
-                    print(f"[beam_search] Run i:{i}")
+                    print(
+                        f"[beam_search] Run i:{i}, cnt_no_updates:{cnt_no_updates[i]}, dist_minimum:{dist_minimum}"
+                    )
                     perplexity_best = self.list_perplexity_population[n_idx][i]
                     population_other = (
                         self.list_population[n_idx][:i]
@@ -994,6 +1000,17 @@ class Optimization:
                         self.list_population[n_idx][i] = words_nxt
                         self.list_perplexity_population[n_idx][i] = perplexity_nxt
                         cnt_no_updates[i] = 0
+
+                        # check save
+                        if perplexity_nxt < self._get_best_all(n_idx)[1] * 1.1:
+                            save_text(
+                                self._calc_perplexity,
+                                n_idx,
+                                " ".join(words_nxt),
+                                verbose=1,
+                            )
+                            self._update_best_all(n_idx, words_nxt, perplexity_nxt)
+
                     else:
                         print(
                             f"[beam_search] No update, max_depth:{max_depth} {stats.summary()}"
@@ -1037,6 +1054,7 @@ class Optimization:
     def run(self, list_idx_target: Optional[list[int]] = None):
         if list_idx_target is None:
             list_idx_target = list(range(NUM_PROBLEMS))
+        list_population_size = [4] * NUM_PROBLEMS
         for n_idx in itertools.cycle(list_idx_target):
             free_memory()
             words_best, perplexity_best_old = self._get_best(n_idx)
@@ -1049,8 +1067,12 @@ class Optimization:
             #     score_estimator=self.score_estimators[n_idx],
             #     iter_total=500,
             # )
+            population_size = list_population_size[n_idx]
             words_best, perplexity_best = self._beam_search(
-                n_idx, self.score_estimators[n_idx], popluation_size=16, iter_total=500
+                n_idx,
+                self.score_estimators[n_idx],
+                population_size=population_size,
+                iter_total=1000,
             )
             print(f"[run] n_idx:{n_idx} perplexity_best:{perplexity_best:.2f}")
             did_kick = False
@@ -1081,7 +1103,7 @@ class Optimization:
                 save_score_memo(self.score_memo, self.score_memo_with_error)
                 self.last_time_score_memo_saved = time()
                 self.score_estimators[n_idx].save_model()
-
+            list_population_size[n_idx] *= 2
 
 if __name__ == "__main__":
     optimizer = Optimization(flag_use_best=False)
