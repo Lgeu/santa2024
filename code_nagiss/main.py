@@ -10,7 +10,6 @@ from typing import Generator, Optional, Union
 
 import numpy as np
 import torch
-import torch.nn.functional as F
 from constants import (
     DF_INPUT,
     LIST_NUM_WORDS,
@@ -30,6 +29,12 @@ from util import (
     save_score_memo,
     save_text,
 )
+
+
+def quantile_loss(pred: torch.Tensor, target: torch.Tensor, q: float):
+    diff = pred - target
+    loss = torch.where(diff >= 0.0, (1.0 - q) * diff, -q * diff)
+    return loss.mean()
 
 
 class ScoreEstimator:
@@ -97,7 +102,7 @@ class ScoreEstimator:
         self.model.train()
         pred: torch.Tensor = self.model(X).squeeze(-1)  # (B,)
         target = torch.tensor(scores, dtype=torch.float, device=self.device).log()
-        loss = F.l1_loss(pred, target)
+        loss = quantile_loss(pred, target, q=1.0 / 8.0)
         loss.backward()
         self.optimizer.step()
         self.optimizer.zero_grad(set_to_none=True)
