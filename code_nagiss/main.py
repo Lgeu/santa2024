@@ -137,6 +137,29 @@ def make_neighbors(
     words = words.copy()
     found = {tuple(words)}
 
+    def calc_cutoff_point(words: list[str]) -> int:
+        # fmt: off
+        stopwords = {"and", "as", "from", "have", "in", "is", "it", "not", "of",
+                     "that", "the", "to", "we", "with", "you"}
+        # fmt: on
+        point = 0
+        for left, right in zip(words, words[1:]):
+            point += left > right and left not in stopwords
+        return point
+
+    if len(words) >= 100:
+        cutoff_point = max(10, calc_cutoff_point(words))
+
+    def cut_off(words_candidates: list[list[str], tuple]) -> list[list[str], tuple]:
+        if len(words) >= 100:
+            return [
+                (words_candidate, neighbor_type)
+                for words_candidate, neighbor_type in words_candidates
+                if calc_cutoff_point(words_candidate) <= cutoff_point
+            ]
+        else:
+            return words_candidates
+
     sorted_segments = []
     for i, (left_word, right_word) in enumerate(zip(words, words[1:])):
         if left_word <= right_word:
@@ -182,7 +205,7 @@ def make_neighbors(
                             (permuted, (source_l, source_r, target_l, target_r, 3))
                         )
             random.shuffle(results)
-            yield from results
+            yield from cut_off(results)
 
         r = range(length, len(words) - length + 1)
         for center in random.sample(r, len(r)):
@@ -248,7 +271,7 @@ def make_neighbors(
                 #         found.add(t)
                 #         results.append((permuted, (left, center, right, 1)))
             random.shuffle(results)
-            yield from results
+            yield from cut_off(results)
 
 
 class Optimization:
@@ -409,7 +432,6 @@ class Optimization:
                     20: 1.0,
                 }
             elif n_idx == 3:
-                # 未検証
                 depth_to_threshold = {
                     0: 1.1,
                     1: 1.06,
@@ -458,18 +480,41 @@ class Optimization:
                     20: 1.0,
                 }
             elif n_idx == 5:
+                # depth_to_threshold = {
+                #     0: 1.012,
+                #     1: 1.008,
+                #     2: 1.006,
+                #     3: 1.004,
+                #     4: 1.0035,
+                #     5: 1.003,
+                #     6: 1.0025,
+                #     7: 1.002,
+                #     8: 1.0015,
+                #     9: 1.0012,
+                #     10: 1.001,
+                #     11: 1.001,
+                #     12: 1.001,
+                #     13: 1.001,
+                #     14: 1.001,
+                #     15: 1.001,
+                #     16: 1.001,
+                #     17: 1.001,
+                #     18: 1.001,
+                #     19: 1.001,
+                #     20: 1.0,
+                # }
                 depth_to_threshold = {
-                    0: 1.015,
-                    1: 1.01,
-                    2: 1.007,
-                    3: 1.005,
-                    4: 1.004,
-                    5: 1.0035,
-                    6: 1.003,
-                    7: 1.0025,
-                    8: 1.002,
-                    9: 1.0015,
-                    10: 1.001,
+                    0: 1.02,
+                    1: 1.015,
+                    2: 1.01,
+                    3: 1.008,
+                    4: 1.006,
+                    5: 1.005,
+                    6: 1.004,
+                    7: 1.003,
+                    8: 1.0025,
+                    9: 1.002,
+                    10: 1.0015,
                     11: 1.001,
                     12: 1.001,
                     13: 1.001,
@@ -486,7 +531,7 @@ class Optimization:
 
             neighbors = make_neighbors(words)
             max_depth = depth
-            for _ in itertools.count(0):
+            for i in itertools.count(0):
                 list_words_nxt: list[list[str]] = []
                 list_texts_nxt: list[str] = []
                 list_neighbor_type: list = []
@@ -502,8 +547,8 @@ class Optimization:
                         list_neighbor_type.append(neighbor_type)
                     except StopIteration:
                         break
-                if len(list_words_nxt) < min(
-                    num_candidates, int(1.5 * len(words) ** 2)
+                if len(list_words_nxt) < (
+                    128 if i == 0 else min(num_candidates, int(1.5 * len(words) ** 2))
                 ):
                     return None, None, None, max_depth
 
@@ -605,7 +650,7 @@ class Optimization:
         words = words.copy()
         neighbor_types = []
         if n_kick == 2:
-            length = 10
+            length = 15
             left = random.randint(0, len(words) - length)
             right = left + length
             removed = words[left:right]
