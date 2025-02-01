@@ -1,13 +1,13 @@
 # Santa 2024 Hamiltonians' solution
 
-## 概要
+## Overview
 
-解法の大きい枠組みとして反復局所探索法 (ILS) を使用しており、大まかに言えば
+We employ an Iterated Local Search (ILS) framework for our solution. In broad terms, the process is as follows:
 
-1. 現在の解 (単語列) を局所的に探索して貪欲に改善を図る
-2. 改善できなくなったら kick (perturbation) によって局所解から抜け出す
+1. Perform a local (greedy) search on the current solution (sequence of words) to improve it.
+2. Once no further improvement is possible, use a "kick" (perturbation) to escape from the local optimum.
 
-という流れを繰り返します。
+We repeat these two steps in a loop.
 
 ```python
 def solve(initial_words):
@@ -21,23 +21,21 @@ def solve(initial_words):
                 best_words = words
 ```
 
-`kick()` 内では、
+Within `kick()`, we carry out operations like:
 
-* 単語列からランダムに 2 単語を選び位置を入れ替える
-* 単語列から連続した区間をランダムに選んで消去し、消された単語をそれぞれランダムな箇所に挿入する
+- Randomly select 2 words from the sequence and swap their positions.
+- Randomly select a continuous segment of the sequence, remove it, then reinsert each removed word at random positions.
 
-のような操作を行います。
-
-## 近傍探索
+## Local Search
 
 ```python
 def depth_first_search(best_score, words, depth):
     for neighbor_words in make_neighbors(words):
-        if score(neighbor_words) < score(initial_words):
-            # 改善すれば終了
+        if score(neighbor_words) < score(words):
+            # If there's an improvement, stop and return
             return neighbor_words
         elif score(neighbor_words) < get_threshold(best_score, depth):
-            # 改善しそうな単語列があればその周辺も探索
+            # If a neighbor seems promising, explore around it as well
             result = depth_first_search(best_score, neighbor_words, depth + 1)
             if result is not None:
                 return result
@@ -51,21 +49,18 @@ def local_search(initial_words):
         words = result
 ```
 
-近傍探索では、上記のような深さ優先探索を行って、スコアが減る限り解を改善し続けます。
+For local search, we perform a depth-first search as shown above, continuously improving the solution as long as it leads to a lower score.
 
-`make_neighbors()` は、単語列から少数個の単語を抜き出して別の箇所に挿入した単語列の集合を生成します。
-`get_threshold()` は、depth が小さい時には `best_score * 1.1` などの値を、depth が大きい時には `best_score` を返します。
+- `make_neighbors()` generates all sequences obtained by taking a small number of words out of the sequence and inserting them elsewhere.
+- `get_threshold()` returns a value like `best_score * 1.1` when the depth is small and `best_score` when the depth is large.
 
-実際のコードでは、
+In the actual implementation, we also include:
+- Early termination based on node count limits
+- More efficient batch score calculation
+- Pruning using a lightweight Neural Network (NN)
 
-* ノード数の制限による探索打ち切り
-* スコアのバッチ計算による効率化
-* NN による枝刈り
+## NN-Based Pruning
 
-なども行っています。
+Exact score computation is very costly, so we first use a lightweight NN to screen for promising neighbors. This allows us to reduce the number of sequences for which we compute the exact score (using Gemma) to below 1/10 of the total.
 
-## NN による枝刈り
-
-正確なスコア計算に要する計算量が大きすぎるため、事前に軽量な NN で有望な近傍を絞り込み、Gemma を使って正確にスコアを計算する単語列の数を 1/10 以下に減らしています。
-
-NN は 1.3M 程度 (Gemma 9B の 1/5000 以下) のパラメータを持ち、強化学習のように探索中にオンラインで最適化します。
+The NN has around 1.3 million parameters (less than 1/5000 the size of Gemma, which is 9B parameters) and is optimized online during the search, in a manner similar to reinforcement learning.
